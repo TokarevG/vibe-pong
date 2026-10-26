@@ -167,28 +167,18 @@ If the configuration file does not exist, create or use default settings. If the
 
 ## 10. Architecture
 
-The project must use a layered architecture that separates core game rules from Pygame-specific functionality.
+The project must keep core game rules separate from Pygame-specific functionality. The project uses a flat package layout: one level of modules, with no nested layer directories.
 
 Suggested package structure:
 
 ```text id="pl8x8x"
 pong/
 ├── __init__.py
-├── __main__.py
-├── core/
-│   ├── game.py
-│   ├── physics.py
-│   ├── entities.py
-│   └── scoring.py
-├── ai/
-│   └── opponent.py
-├── interface/
-│   ├── renderer.py
-│   ├── input.py
-│   ├── menus.py
-│   └── audio.py
-├── config/
-│   └── settings.py
+├── __main__.py     # Pygame loop, input, drawing, menus, sound
+├── game.py         # Match state: serve, rally, pause, game over
+├── physics.py      # Ball movement, collisions, bounce angles, speed
+├── ai.py           # Computer paddle
+├── settings.py     # Load, validate, and save configuration
 └── tests/
     ├── test_physics.py
     ├── test_scoring.py
@@ -197,9 +187,9 @@ pong/
 
 This is a suggested layout; exact module boundaries may change as implementation progresses.
 
-Core game logic must not depend on Pygame. It must be possible to test scoring, movement, collisions, ball acceleration, and match completion without opening a graphical window.
+Core game logic (`game.py`, `physics.py`, `ai.py`, `settings.py`) must not import Pygame. It must be possible to test scoring, movement, collisions, ball acceleration, and match completion without opening a graphical window.
 
-Pygame-specific rendering, keyboard handling, window management, and audio playback must remain in the interface layer.
+Pygame-specific rendering, keyboard handling, window management, menus, and audio playback must remain in `__main__.py`.
 
 ## 11. Automated Testing
 

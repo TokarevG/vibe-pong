@@ -18,40 +18,30 @@ Dependencies are installed separately. The `pygame-ce` package is imported under
 
 ## 2. Layers
 
-The project is split into two layers:
+The project uses a flat package with one level of modules and no nested layer directories. Game rules are kept separate from Pygame by convention:
 
-- **Core layer** (`pong/core/`, `pong/ai/`, `pong/config/`): game rules, physics, scoring, AI decisions, and settings handling. This layer must not import `pygame` or any other windowing or audio module, so it can be tested without a display.
-- **Interface layer** (`pong/interface/`): everything that touches Pygame. This includes the window, drawing, keyboard events, menus, and sound playback.
+- **Core modules** (`game.py`, `physics.py`, `ai.py`, `settings.py`): game rules, physics, scoring, AI decisions, and settings handling. These must not import `pygame`, so they can be tested without a display.
+- **Pygame module** (`__main__.py`): the window, drawing, keyboard events, menus, sound playback, and the main loop. It is the only module that imports `pygame`.
 
-The interface layer calls into the core layer. The core layer never calls back into the interface layer. The game loop reads input, asks the core to advance one time step, and then asks the interface to draw the result.
+The Pygame module calls into the core modules. The core modules never import the Pygame module. The game loop reads input, asks the core to advance one time step, and then draws the result.
 
 ## 3. Package Structure
 
 ```text
 pong/
 ├── __init__.py
-├── __main__.py          # Entry point for `python -m pong`
-├── core/
-│   ├── game.py          # Game state machine: serve, rally, pause, match over
-│   ├── physics.py       # Ball movement, wall and paddle collisions, bounce angles, speed
-│   ├── entities.py      # Ball and paddle data and their basic updates
-│   └── scoring.py       # Score tracking and match-winner rules
-├── ai/
-│   └── opponent.py      # Computer paddle logic, parameterised by difficulty
-├── interface/
-│   ├── renderer.py      # Draws the playfield with 5:3 letterboxing
-│   ├── input.py         # Maps key events to paddle and command actions
-│   ├── menus.py         # Main, pause, settings, and game-over menus
-│   └── audio.py         # Loads and plays sound effects, applies volume
-├── config/
-│   └── settings.py      # Loads, validates, and saves the JSON settings file
+├── __main__.py     # Pygame loop, input, drawing, menus, sound (only module importing pygame)
+├── game.py         # Match state: serve, rally, pause, game over (no Pygame)
+├── physics.py      # Ball movement, collisions, bounce angles, speed (no Pygame)
+├── ai.py           # Computer paddle, parameterised by difficulty (no Pygame)
+├── settings.py     # Load, validate, and save the JSON settings file (no Pygame)
 └── tests/
     ├── test_physics.py
     ├── test_scoring.py
     └── test_game_rules.py
 ```
 
-The layout follows the suggestion in [plan.md](plan.md), section 10. Module boundaries may change during implementation.
+The layout follows the suggestion in [plan.md](plan.md), section 10. Module boundaries may change during implementation, but the rule that core modules do not import Pygame must hold.
 
 ## 4. Game Loop and Timing
 
@@ -62,14 +52,14 @@ The layout follows the suggestion in [plan.md](plan.md), section 10. Module boun
 ## 5. Settings
 
 - The settings file lives at `$XDG_CONFIG_HOME/pong/config.json`, or `~/.config/pong/config.json` when `XDG_CONFIG_HOME` is unset.
-- `config/settings.py` reads the file, checks each value against its expected type and range, and substitutes the default for any value that fails. A missing or unreadable file yields the full default set.
+- `settings.py` reads the file, checks each value against its expected type and range, and substitutes the default for any value that fails. A missing or unreadable file yields the full default set.
 - Bindings are validated for conflicts before they are saved.
 
 ## 6. Testing Strategy
 
 - Tests live in `pong/tests/` and run with `pytest`.
-- Core tests must not import `pygame` and must not open a window. This is enforced by the layer boundary above.
-- Interface code is checked by running the game manually; it is not covered by unit tests.
+- Core tests must not import `pygame` and must not open a window. This holds because no core module imports `pygame`.
+- `__main__.py` is checked by running the game manually; it is not covered by unit tests.
 
 ## 7. Quality Tooling
 
