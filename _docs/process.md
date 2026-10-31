@@ -1,5 +1,6 @@
 - Tasks are GitHub issues, one at a time
 - Commit regularly
+- Groomed issues carry the `groomed` label
 
 Roles
 
