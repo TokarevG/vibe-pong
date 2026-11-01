@@ -7,6 +7,34 @@ lower on screen.
 
 import math
 
+MAX_BOUNCE_ANGLE_DEGREES = 60.0
+"""Angle from horizontal, in degrees, for a hit at the paddle's far edge."""
+
+
+def bounce_velocity(offset: float, speed: float, direction: int) -> tuple[float, float]:
+    """Return the ball's ``(vx, vy)`` after a paddle hit, from the impact position.
+
+    ``offset`` is the normalized impact position on the paddle: -1 at the top
+    edge, 0 at the centre and 1 at the bottom edge. Values outside [-1, 1] are
+    clamped to that range. The angle from horizontal is
+    ``offset * MAX_BOUNCE_ANGLE_DEGREES``, so ``vx = direction * speed * cos(angle)``
+    and ``vy = speed * sin(angle)``. Negative ``vy`` moves the ball up the screen.
+    The speed is preserved: ``sqrt(vx**2 + vy**2) == speed``.
+
+    Raises:
+        ValueError: if ``direction`` is not +1 or -1, or ``speed`` is negative.
+    """
+    if direction not in (1, -1):
+        raise ValueError(f"direction must be 1 or -1, got {direction}")
+    if speed < 0:
+        raise ValueError(f"speed must not be negative, got {speed}")
+
+    clamped = min(max(offset, -1.0), 1.0)
+    angle = math.radians(clamped * MAX_BOUNCE_ANGLE_DEGREES)
+    vx = direction * speed * math.cos(angle)
+    vy = speed * math.sin(angle)
+    return vx, vy
+
 
 def _travel(velocity: float, dt: float) -> float:
     """Distance covered at ``velocity`` for ``dt``, with no travel at zero velocity.

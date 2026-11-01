@@ -1,9 +1,16 @@
 import ast
+import math
 from pathlib import Path
 
 import pytest
 
-from pong.physics import Ball, Paddle, ball_hits_paddle
+from pong.physics import (
+    MAX_BOUNCE_ANGLE_DEGREES,
+    Ball,
+    Paddle,
+    ball_hits_paddle,
+    bounce_velocity,
+)
 
 PHYSICS_SOURCE = Path(__file__).parent.parent / "physics.py"
 FIELD_HEIGHT = 600
@@ -389,3 +396,103 @@ def test_hit_check_does_not_change_inputs_or_objects():
     assert first is True and second is True
     assert (ball.x, ball.y, ball.vx, ball.vy, ball.radius) == (68, 250, -300, 0, 8)
     assert (paddle.x, paddle.y, paddle.width, paddle.height) == (50, 200, 12, 100)
+
+
+def test_max_bounce_angle_is_60_degrees():
+    assert MAX_BOUNCE_ANGLE_DEGREES == 60.0
+
+
+def test_bounce_velocity_returns_tuple():
+    result = bounce_velocity(0.5, 300.0, 1)
+    assert isinstance(result, tuple)
+    assert len(result) == 2
+
+
+@pytest.mark.parametrize("direction", [0, 2, -2, 0.5, None])
+def test_bounce_velocity_invalid_direction_raises(direction):
+    with pytest.raises(ValueError):
+        bounce_velocity(0.0, 300.0, direction)
+
+
+def test_bounce_velocity_negative_speed_raises():
+    with pytest.raises(ValueError):
+        bounce_velocity(0.0, -1.0, 1)
+
+
+def test_bounce_velocity_zero_speed_gives_zero_velocity():
+    assert bounce_velocity(0.7, 0.0, 1) == pytest.approx((0.0, 0.0))
+
+
+def test_bounce_velocity_center_hit_is_horizontal_right():
+    vx, vy = bounce_velocity(0.0, 300.0, 1)
+    assert vy == 0
+    assert abs(vx) == 300.0
+    assert vx > 0
+
+
+def test_bounce_velocity_center_hit_is_horizontal_left():
+    vx, vy = bounce_velocity(0.0, 300.0, -1)
+    assert vy == 0
+    assert abs(vx) == 300.0
+    assert vx < 0
+
+
+def test_bounce_velocity_bottom_edge_is_60_degrees_down():
+    vx, vy = bounce_velocity(1.0, 300.0, 1)
+    assert vx == pytest.approx(300.0 * math.cos(math.radians(60)))
+    assert vy == pytest.approx(300.0 * math.sin(math.radians(60)))
+    assert vy > 0
+    assert abs(vy) / abs(vx) == pytest.approx(1.732, abs=1e-3)
+
+
+def test_bounce_velocity_top_edge_is_60_degrees_up():
+    vx, vy = bounce_velocity(-1.0, 300.0, 1)
+    assert vx == pytest.approx(300.0 * math.cos(math.radians(60)))
+    assert vy == pytest.approx(-300.0 * math.sin(math.radians(60)))
+    assert vy < 0
+    assert abs(vy) / abs(vx) == pytest.approx(1.732, abs=1e-3)
+
+
+def test_bounce_velocity_top_edge_sends_ball_up_for_left_return():
+    vx, vy = bounce_velocity(-1.0, 300.0, -1)
+    assert vx < 0
+    assert vy < 0
+
+
+def test_bounce_velocity_angle_is_linear_in_offset():
+    _, vy_half = bounce_velocity(0.5, 300.0, 1)
+    vx_half, _ = bounce_velocity(0.5, 300.0, 1)
+    angle_half = math.degrees(math.atan2(vy_half, vx_half))
+    assert angle_half == pytest.approx(0.5 * MAX_BOUNCE_ANGLE_DEGREES)
+
+
+@pytest.mark.parametrize("offset", [0.1, 0.25, 0.5, 0.9, 1.0])
+@pytest.mark.parametrize("direction", [1, -1])
+def test_bounce_velocity_opposite_offsets_mirror_vy(offset, direction):
+    vx_pos, vy_pos = bounce_velocity(offset, 300.0, direction)
+    vx_neg, vy_neg = bounce_velocity(-offset, 300.0, direction)
+    assert vx_neg == pytest.approx(vx_pos)
+    assert vy_neg == pytest.approx(-vy_pos)
+
+
+@pytest.mark.parametrize("offset", [-1.0, -0.6, -0.2, 0.0, 0.3, 0.8, 1.0])
+@pytest.mark.parametrize("direction", [1, -1])
+@pytest.mark.parametrize("speed", [1.0, 300.0, 1234.5])
+def test_bounce_velocity_preserves_speed(offset, direction, speed):
+    vx, vy = bounce_velocity(offset, speed, direction)
+    assert math.hypot(vx, vy) == pytest.approx(speed)
+
+
+@pytest.mark.parametrize("offset", [-5.0, -1.5, 1.0001, 2.0, 1e9])
+def test_bounce_velocity_offset_outside_range_is_clamped(offset):
+    clamped = max(-1.0, min(1.0, offset))
+    assert bounce_velocity(offset, 300.0, 1) == pytest.approx(
+        bounce_velocity(clamped, 300.0, 1)
+    )
+
+
+def test_bounce_velocity_direction_sets_sign_of_vx_only():
+    vx_r, vy_r = bounce_velocity(0.4, 300.0, 1)
+    vx_l, vy_l = bounce_velocity(0.4, 300.0, -1)
+    assert vx_l == pytest.approx(-vx_r)
+    assert vy_l == pytest.approx(vy_r)
