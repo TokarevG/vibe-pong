@@ -498,3 +498,15 @@ def test_qa_repro_x50_at_vx_minus_900_is_hit():
     match.ball.y = 300.0
     match.ball.vx = -900.0
     assert match.update(DT, 0, 0) == [GameEvent.PADDLE_HIT]
+
+
+def test_qa_repro_shallow_graze_on_p1_corner_is_hit():
+    # QA repro: the path only clips P1's rounded top-left corner by 0.15 px, which
+    # the old fixed samples missed. The exact segment test must count it.
+    match = rally_match()
+    match.ball.x = 34.4043
+    match.ball.y = 241.1766
+    match.ball.vx = -741.41
+    match.ball.vy = 140.44
+    assert match.update(DT, 0, 0) == [GameEvent.PADDLE_HIT]
+    assert match.ball.vx > 0

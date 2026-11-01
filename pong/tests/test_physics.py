@@ -15,6 +15,7 @@ from pong.physics import (
     ball_hits_paddle,
     bounce_velocity,
     next_speed,
+    segment_hits_paddle,
 )
 
 PHYSICS_SOURCE = Path(__file__).parent.parent / "physics.py"
@@ -674,3 +675,50 @@ def test_next_speed_nan_raises():
 @pytest.mark.parametrize("speed", [-math.inf, 1e308, -1e308])
 def test_next_speed_extreme_finite_or_infinite_is_never_above_max(speed):
     assert next_speed(speed) <= MAX_SPEED
+
+
+# Segment test: segment_hits_paddle(x0, y0, x1, y1, ball_radius,
+#                                   paddle_x, paddle_y, paddle_w, paddle_h, ball_vx)
+
+
+def test_segment_passing_through_paddle_is_hit_with_both_ends_outside():
+    assert segment_hits_paddle(0, 300, 60, 300, RADIUS, 30, 250, 12, 100, -300) is True
+
+
+def test_segment_grazing_rounded_corner_within_radius_is_hit():
+    # Corner (30, 250) is 7.5 px above the segment, closer than the radius of 8.
+    assert (
+        segment_hits_paddle(20, 242.5, 40, 242.5, RADIUS, 30, 250, 12, 100, -300)
+        is True
+    )
+
+
+def test_segment_just_missing_rounded_corner_is_not_hit():
+    # Corner (30, 250) is 8.5 px above the segment, farther than the radius.
+    assert (
+        segment_hits_paddle(20, 241.5, 40, 241.5, RADIUS, 30, 250, 12, 100, -300)
+        is False
+    )
+
+
+def test_segment_ending_exactly_one_radius_from_face_is_hit():
+    assert segment_hits_paddle(0, 300, 22, 300, RADIUS, 30, 250, 12, 100, -300) is True
+
+
+def test_segment_entirely_short_of_paddle_is_not_hit():
+    assert segment_hits_paddle(0, 300, 21, 300, RADIUS, 30, 250, 12, 100, -300) is False
+
+
+def test_segment_moving_away_is_not_hit_even_when_overlapping():
+    assert segment_hits_paddle(36, 300, 40, 300, RADIUS, 30, 250, 12, 100, 300) is False
+
+
+def test_zero_length_segment_matches_point_test():
+    assert segment_hits_paddle(36, 300, 36, 300, RADIUS, 30, 250, 12, 100, -300) is True
+    assert (
+        segment_hits_paddle(51, 300, 51, 300, RADIUS, 30, 250, 12, 100, -300) is False
+    )
+
+
+def test_segment_with_zero_vx_is_never_a_hit():
+    assert segment_hits_paddle(36, 300, 36, 300, RADIUS, 30, 250, 12, 100, 0) is False

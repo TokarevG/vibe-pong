@@ -245,15 +245,136 @@ def ball_hits_paddle(
 
     This function does not change any state.
     """
-    paddle_on_left = paddle_x + paddle_w / 2 < 500
-    if paddle_on_left:
-        if not ball_vx < 0:
-            return False
-    elif not ball_vx > 0:
+    if not _paddle_faces_ball(paddle_x, paddle_w, ball_vx):
         return False
 
-    nearest_x = min(max(ball_x, paddle_x), paddle_x + paddle_w)
-    nearest_y = min(max(ball_y, paddle_y), paddle_y + paddle_h)
-    dx = ball_x - nearest_x
-    dy = ball_y - nearest_y
-    return dx * dx + dy * dy <= ball_radius * ball_radius
+    distance_sq = _point_rect_distance_sq(
+        ball_x, ball_y, paddle_x, paddle_y, paddle_x + paddle_w, paddle_y + paddle_h
+    )
+    return distance_sq <= ball_radius * ball_radius
+
+
+def _paddle_faces_ball(paddle_x: float, paddle_w: float, ball_vx: float) -> bool:
+    """Return ``True`` if ``ball_vx`` points toward the paddle's side of the playfield.
+
+    The paddle is on the left when its centre ``x`` is less than 500, otherwise on
+    the right. The left paddle needs ``ball_vx < 0``, the right one ``ball_vx > 0``.
+    """
+    paddle_on_left = paddle_x + paddle_w / 2 < 500
+    if paddle_on_left:
+        return ball_vx < 0
+    return ball_vx > 0
+
+
+def _point_rect_distance_sq(
+    px: float, py: float, x0: float, y0: float, x1: float, y1: float
+) -> float:
+    """Return the squared distance from ``(px, py)`` to the rectangle ``[x0, x1] x [y0, y1]``."""
+    nearest_x = min(max(px, x0), x1)
+    nearest_y = min(max(py, y0), y1)
+    dx = px - nearest_x
+    dy = py - nearest_y
+    return dx * dx + dy * dy
+
+
+def _point_segment_distance_sq(
+    px: float, py: float, ax: float, ay: float, bx: float, by: float
+) -> float:
+    """Return the squared distance from ``(px, py)`` to the segment ``a``-``b``.
+
+    A zero-length segment is treated as the single point ``a``.
+    """
+    dx = bx - ax
+    dy = by - ay
+    length_sq = dx * dx + dy * dy
+    if length_sq == 0:
+        t = 0.0
+    else:
+        t = min(max(((px - ax) * dx + (py - ay) * dy) / length_sq, 0.0), 1.0)
+    cx = ax + t * dx
+    cy = ay + t * dy
+    return (px - cx) ** 2 + (py - cy) ** 2
+
+
+def _segment_crosses_rect(
+    ax: float,
+    ay: float,
+    bx: float,
+    by: float,
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+) -> bool:
+    """Return ``True`` if the segment ``a``-``b`` meets the closed rectangle.
+
+    Liang-Barsky clipping: the segment is kept as ``a + t * (b - a)`` for ``t`` in
+    ``[0, 1]``, cut down by each of the four edge half-planes.
+    """
+    dx = bx - ax
+    dy = by - ay
+    t_enter = 0.0
+    t_exit = 1.0
+    for p, q in ((-dx, ax - x0), (dx, x1 - ax), (-dy, ay - y0), (dy, y1 - ay)):
+        if p == 0:
+            if q < 0:
+                return False
+            continue
+        t = q / p
+        if p < 0:
+            t_enter = max(t_enter, t)
+        else:
+            t_exit = min(t_exit, t)
+        if t_enter > t_exit:
+            return False
+    return True
+
+
+def segment_hits_paddle(
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    ball_radius: float,
+    paddle_x: float,
+    paddle_y: float,
+    paddle_w: float,
+    paddle_h: float,
+    ball_vx: float,
+) -> bool:
+    """Return ``True`` if a ball centre moving along the segment touches the paddle.
+
+    The segment runs from ``(x0, y0)`` to ``(x1, y1)``, the ball centre before and
+    after a straight move. The paddle is the same as in ``ball_hits_paddle``, and
+    so is the side and direction rule: ``ball_vx`` must point toward the paddle's
+    side, and it is the velocity that applies to the whole segment.
+
+    The result is exact. The ball touches the paddle at some point of the segment
+    exactly when the distance from the segment to the paddle rectangle is at most
+    ``ball_radius``. For two convex shapes that do not overlap, that distance is
+    the least of two sets: the distance from each endpoint to the rectangle, and
+    the distance from each rectangle corner to the segment. If the segment meets
+    the rectangle, the distance is zero and the result is ``True``.
+
+    This function does not change any state.
+    """
+    if not _paddle_faces_ball(paddle_x, paddle_w, ball_vx):
+        return False
+
+    rect_x1 = paddle_x + paddle_w
+    rect_y1 = paddle_y + paddle_h
+    if _segment_crosses_rect(x0, y0, x1, y1, paddle_x, paddle_y, rect_x1, rect_y1):
+        return True
+
+    candidates = [
+        _point_rect_distance_sq(x0, y0, paddle_x, paddle_y, rect_x1, rect_y1),
+        _point_rect_distance_sq(x1, y1, paddle_x, paddle_y, rect_x1, rect_y1),
+    ]
+    for cx, cy in (
+        (paddle_x, paddle_y),
+        (rect_x1, paddle_y),
+        (paddle_x, rect_y1),
+        (rect_x1, rect_y1),
+    ):
+        candidates.append(_point_segment_distance_sq(cx, cy, x0, y0, x1, y1))
+    return min(candidates) <= ball_radius * ball_radius

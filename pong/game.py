@@ -4,6 +4,7 @@ This module must not import pygame, so the rules can be tested without
 opening a window.
 """
 
+import itertools
 import math
 from enum import Enum, auto
 
@@ -12,9 +13,9 @@ from pong.physics import (
     SERVE_SPEED,
     Ball,
     Paddle,
-    ball_hits_paddle,
     bounce_velocity,
     next_speed,
+    segment_hits_paddle,
 )
 from pong.playfield import PLAYFIELD_HEIGHT, PLAYFIELD_WIDTH
 
@@ -100,54 +101,48 @@ def _other(player: Player) -> Player:
     return Player.P2 if player is Player.P1 else Player.P1
 
 
-SWEEP_SPACING = 0.5
-"""Largest gap between sampled ball centres in one step, in ball radii."""
-
-MAX_SWEEP_SAMPLES = 1000
-"""Cap on the samples in one step, so an extreme ``dt`` cannot make the work unbounded."""
+MAX_WALL_TOUCHES = 1000
+"""Cap on wall touches traced in one step. Past it the path is taken as one straight line."""
 
 
-def _centres_along_step(
-    ball: Ball, dt: float, crossing_x: float
+def _path_corners(
+    before: Ball, dt: float, end_x: float, end_y: float
 ) -> list[tuple[float, float]]:
-    """Return ball centres sampled along one step, from the state ``ball`` is in.
+    """Return the corners of the ball centre's path over one step.
 
-    The samples are at times ``0, dt/n, 2*dt/n, ..., dt``. The ball's speed is
-    constant over the step, so neighbouring samples are ``speed * dt / n`` apart
-    along the path. ``n`` is chosen so that gap is at most ``SWEEP_SPACING`` times
-    the radius. Each sample comes from a copy of ``ball`` stepped to that time, so a
-    wall bounce inside the step is followed. The time the centre crosses
-    ``crossing_x`` is added as one more sample when it falls inside the step.
+    The path runs from ``before`` (the state before the step) to ``(end_x, end_y)``
+    (the state after it). Between wall touches it is a straight line. ``Ball.step``
+    reflects the centre at each wall touch, so each touch is a corner. The corners
+    are the start, each touch that falls strictly inside the step, and the end.
 
-    Why this covers the path: the centres that touch a paddle form a convex
-    region (the paddle rectangle grown by the radius). Where a straight path
-    passes through that region, the piece inside it is at least one sample gap
-    long, unless the path just clips a rounded corner of it. A clip of that kind is
-    shallower than about ``radius / 32`` (a quarter of a pixel for radius 8). So a
-    hit is missed only when the ball grazes a corner that shallowly.
+    A touch is at time ``t`` when the unfolded centre reaches a wall. The first
+    touch is at ``(wall - y) / vy`` for the wall in the direction of motion, and the
+    next ones follow every ``span / |vy|``, alternating walls. This matches
+    ``Ball.step``, and nothing is sampled.
+
+    If the step would touch walls more than ``MAX_WALL_TOUCHES`` times, the path is
+    returned as the single straight line from start to end. That only happens for a
+    step far longer than the game's.
     """
-    spacing = SWEEP_SPACING * ball.radius
-    distance = math.hypot(ball.vx, ball.vy) * dt
-    if distance / spacing < MAX_SWEEP_SAMPLES:
-        count = max(1, math.ceil(distance / spacing))
-    else:
-        count = MAX_SWEEP_SAMPLES
-
-    times = [0.0] + [dt * i / count for i in range(1, count + 1)]
-    if ball.vx != 0:
-        crossing_t = (crossing_x - ball.x) / ball.vx
-        if 0 < crossing_t <= dt:
-            times.append(crossing_t)
-
-    centres: list[tuple[float, float]] = []
-    for t in times:
-        if t <= 0:
-            centres.append((ball.x, ball.y))
-            continue
-        probe = Ball(ball.x, ball.y, ball.vx, ball.vy, ball.radius)
-        probe.step(t, PLAYFIELD_HEIGHT)
-        centres.append((probe.x, probe.y))
-    return centres
+    corners = [(before.x, before.y)]
+    top = before.radius
+    bottom = PLAYFIELD_HEIGHT - before.radius
+    span = bottom - top
+    if before.vy != 0 and math.isfinite(dt) and span > 0:
+        wall = bottom if before.vy > 0 else top
+        t = (wall - before.y) / before.vy
+        gap = span / abs(before.vy)
+        touches = 0
+        while t < dt:
+            if touches == MAX_WALL_TOUCHES:
+                return [corners[0], (end_x, end_y)]
+            if t > 0:
+                corners.append((before.x + before.vx * t, wall))
+            wall = top if wall == bottom else bottom
+            t += gap
+            touches += 1
+    corners.append((end_x, end_y))
+    return corners
 
 
 class Match:
@@ -267,17 +262,20 @@ class Match:
         Return ``True`` if it did.
 
         The path runs from ``before`` (the state before the step) to the ball's
-        current position, sampled by ``_centres_along_step``. A hit is any sample
-        for which ``ball_hits_paddle`` is true.
+        current position, bending at wall touches (``_path_corners``). A hit is any
+        segment of that path for which ``segment_hits_paddle`` is true.
 
         ``direction`` is the horizontal direction the ball leaves in: +1 for P1's
         paddle, -1 for P2's. The new speed is ``next_speed`` of the current speed.
         The ball keeps its position.
         """
+        corners = _path_corners(before, dt, self.ball.x, self.ball.y)
         touched = any(
-            ball_hits_paddle(
-                x,
-                y,
+            segment_hits_paddle(
+                x0,
+                y0,
+                x1,
+                y1,
                 self.ball.radius,
                 paddle.x,
                 paddle.y,
@@ -285,7 +283,7 @@ class Match:
                 paddle.height,
                 self.ball.vx,
             )
-            for x, y in _centres_along_step(before, dt, paddle.x + paddle.width / 2)
+            for (x0, y0), (x1, y1) in itertools.pairwise(corners)
         )
         if not touched:
             return False
