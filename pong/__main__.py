@@ -185,6 +185,23 @@ def _read_directions(
     return p1_direction, p2_direction
 
 
+def _handle_key_down(key: int, settings: Settings, match: Match) -> None:
+    """Start the serve on a key press that is not a paddle key or Esc.
+
+    ``key`` is the Pygame key code of a KEYDOWN event. The four bound paddle keys
+    are read from ``settings.bindings`` on every call, so a rebinding applies at
+    once. Esc is excluded because it is reserved for the pause menu. ``start_rally``
+    itself does nothing unless the match is serving and not paused.
+    """
+    if key == pygame.K_ESCAPE:
+        return
+    paddle_codes = {
+        _key_code(key_name, action) for action, key_name in settings.bindings.items()
+    }
+    if key not in paddle_codes:
+        match.start_rally()
+
+
 def main() -> int:
     pygame.init()
     # Loaded once. Bindings are read from this object each frame, not the file.
@@ -206,6 +223,8 @@ def main() -> int:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
+            elif event.type == pygame.KEYDOWN:
+                _handle_key_down(event.key, settings, match)
             elif event.type == pygame.VIDEORESIZE and event.w > 0 and event.h > 0:
                 screen = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE)
 
