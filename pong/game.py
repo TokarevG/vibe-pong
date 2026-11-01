@@ -100,6 +100,56 @@ def _other(player: Player) -> Player:
     return Player.P2 if player is Player.P1 else Player.P1
 
 
+SWEEP_SPACING = 0.5
+"""Largest gap between sampled ball centres in one step, in ball radii."""
+
+MAX_SWEEP_SAMPLES = 1000
+"""Cap on the samples in one step, so an extreme ``dt`` cannot make the work unbounded."""
+
+
+def _centres_along_step(
+    ball: Ball, dt: float, crossing_x: float
+) -> list[tuple[float, float]]:
+    """Return ball centres sampled along one step, from the state ``ball`` is in.
+
+    The samples are at times ``0, dt/n, 2*dt/n, ..., dt``. The ball's speed is
+    constant over the step, so neighbouring samples are ``speed * dt / n`` apart
+    along the path. ``n`` is chosen so that gap is at most ``SWEEP_SPACING`` times
+    the radius. Each sample comes from a copy of ``ball`` stepped to that time, so a
+    wall bounce inside the step is followed. The time the centre crosses
+    ``crossing_x`` is added as one more sample when it falls inside the step.
+
+    Why this covers the path: the centres that touch a paddle form a convex
+    region (the paddle rectangle grown by the radius). Where a straight path
+    passes through that region, the piece inside it is at least one sample gap
+    long, unless the path just clips a rounded corner of it. A clip of that kind is
+    shallower than about ``radius / 32`` (a quarter of a pixel for radius 8). So a
+    hit is missed only when the ball grazes a corner that shallowly.
+    """
+    spacing = SWEEP_SPACING * ball.radius
+    distance = math.hypot(ball.vx, ball.vy) * dt
+    if distance / spacing < MAX_SWEEP_SAMPLES:
+        count = max(1, math.ceil(distance / spacing))
+    else:
+        count = MAX_SWEEP_SAMPLES
+
+    times = [0.0] + [dt * i / count for i in range(1, count + 1)]
+    if ball.vx != 0:
+        crossing_t = (crossing_x - ball.x) / ball.vx
+        if 0 < crossing_t <= dt:
+            times.append(crossing_t)
+
+    centres: list[tuple[float, float]] = []
+    for t in times:
+        if t <= 0:
+            centres.append((ball.x, ball.y))
+            continue
+        probe = Ball(ball.x, ball.y, ball.vx, ball.vy, ball.radius)
+        probe.step(t, PLAYFIELD_HEIGHT)
+        centres.append((probe.x, probe.y))
+    return centres
+
+
 class Match:
     """One match: two paddles, the score, the ball and the serving state.
 
@@ -165,9 +215,9 @@ class Match:
 
         Both paddles move first, through ``Paddle.move``. While serving, the ball
         stays still and nothing else happens. While rallying, the ball is stepped,
-        then checked for a wall bounce, a paddle hit, and a point. Returns an empty
-        list when nothing happened, and once a player has won it changes nothing
-        and returns an empty list.
+        then checked for a wall bounce, a paddle hit along the step's path, and a
+        point. Returns an empty list when nothing happened, and once a player has
+        won it changes nothing and returns an empty list.
 
         ``dt`` should be at most 0.02 s, which the game loop enforces.
 
@@ -184,13 +234,17 @@ class Match:
             return []
 
         events: list[GameEvent] = []
+        # The state before the step, kept so the paddle check can sweep the path.
+        before = Ball(
+            self.ball.x, self.ball.y, self.ball.vx, self.ball.vy, self.ball.radius
+        )
         if self.ball.step(dt, PLAYFIELD_HEIGHT):
             events.append(GameEvent.WALL_BOUNCE)
 
         if self.ball.vx < 0:
-            hit = self._bounce_off(self.p1, direction=1)
+            hit = self._bounce_off(self.p1, 1, before, dt)
         elif self.ball.vx > 0:
-            hit = self._bounce_off(self.p2, direction=-1)
+            hit = self._bounce_off(self.p2, -1, before, dt)
         else:
             hit = False
         if hit:
@@ -205,23 +259,35 @@ class Match:
 
         return events
 
-    def _bounce_off(self, paddle: Paddle, direction: int) -> bool:
-        """Return the ball off ``paddle`` if it touches it, and return ``True`` if it did.
+    def _bounce_off(
+        self, paddle: Paddle, direction: int, before: Ball, dt: float
+    ) -> bool:
+        """Bounce the ball off ``paddle`` if its path this step touches it.
+
+        Return ``True`` if it did.
+
+        The path runs from ``before`` (the state before the step) to the ball's
+        current position, sampled by ``_centres_along_step``. A hit is any sample
+        for which ``ball_hits_paddle`` is true.
 
         ``direction`` is the horizontal direction the ball leaves in: +1 for P1's
         paddle, -1 for P2's. The new speed is ``next_speed`` of the current speed.
         The ball keeps its position.
         """
-        if not ball_hits_paddle(
-            self.ball.x,
-            self.ball.y,
-            self.ball.radius,
-            paddle.x,
-            paddle.y,
-            paddle.width,
-            paddle.height,
-            self.ball.vx,
-        ):
+        touched = any(
+            ball_hits_paddle(
+                x,
+                y,
+                self.ball.radius,
+                paddle.x,
+                paddle.y,
+                paddle.width,
+                paddle.height,
+                self.ball.vx,
+            )
+            for x, y in _centres_along_step(before, dt, paddle.x + paddle.width / 2)
+        )
+        if not touched:
             return False
 
         half_height = paddle.height / 2

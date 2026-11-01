@@ -440,3 +440,61 @@ def test_dt_zero_changes_no_positions():
     match.update(0.0, 1, -1)
     assert (match.p1.y, match.p2.y) == (250, 250)
     assert (match.ball.x, match.ball.y) == (500, 300)
+
+
+def test_fast_ball_inside_p1_window_is_hit_in_one_step():
+    # Scripted case from #13: the ball centre starts inside P1 and leaves it in one step.
+    match = rally_match()
+    match.ball.x = 36.0
+    match.ball.y = 300.0
+    match.ball.vx = -900.0
+    events = match.update(DT, 0, 0)
+    assert events == [GameEvent.PADDLE_HIT]
+    assert match.ball.vx > 0
+
+
+def test_ball_starting_inside_window_and_passing_through_is_hit():
+    # Starts inside P1's reach, ends past it at x 18: only the start sample touches.
+    match = rally_match()
+    match.ball.x = 36.0
+    match.ball.y = 300.0
+    match.ball.vx = -900.0
+    assert match.update(DT, 0, 0) == [GameEvent.PADDLE_HIT]
+
+
+def test_ball_crossing_paddle_inside_one_long_step_is_hit():
+    # A longer step than the loop allows, so neither end lies within P1's reach.
+    # Only a sample between the ends touches the paddle.
+    match = rally_match()
+    match.ball.x = 100.0
+    match.ball.y = 300.0
+    match.ball.vx = -900.0
+    events = match.update(0.1, 0, 0)
+    assert events == [GameEvent.PADDLE_HIT]
+    assert match.ball.vx > 0
+
+
+def test_ball_moving_away_from_p1_inside_window_is_not_hit():
+    match = rally_match()
+    match.ball.x = 36.0
+    match.ball.y = 300.0
+    match.ball.vx = 900.0
+    events = match.update(DT, 0, 0)
+    assert events == []
+    assert match.ball.vx == 900.0
+
+
+def test_qa_repro_x50_at_vx_minus_700_is_hit():
+    match = rally_match()
+    match.ball.x = 50.0
+    match.ball.y = 300.0
+    match.ball.vx = -700.0
+    assert match.update(DT, 0, 0) == [GameEvent.PADDLE_HIT]
+
+
+def test_qa_repro_x50_at_vx_minus_900_is_hit():
+    match = rally_match()
+    match.ball.x = 50.0
+    match.ball.y = 300.0
+    match.ball.vx = -900.0
+    assert match.update(DT, 0, 0) == [GameEvent.PADDLE_HIT]
