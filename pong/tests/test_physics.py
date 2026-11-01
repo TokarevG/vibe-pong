@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from pong.physics import Ball, Paddle
+from pong.physics import Ball, Paddle, ball_hits_paddle
 
 PHYSICS_SOURCE = Path(__file__).parent.parent / "physics.py"
 FIELD_HEIGHT = 600
@@ -310,3 +310,82 @@ def test_ball_nan_dt_raises_and_leaves_ball_unchanged():
     assert ball.x == 500
     assert ball.y == 300
     assert ball.vy == 200
+
+
+# Paddle collision: ball_hits_paddle(ball_x, ball_y, ball_radius,
+#                                    paddle_x, paddle_y, paddle_w, paddle_h, ball_vx)
+RADIUS = 8
+
+
+def test_direct_hit_on_left_paddle_moving_toward_it_is_true():
+    # Paddle 50..62 in x, 200..300 in y; ball centre 6 px from its right face.
+    assert ball_hits_paddle(68, 250, RADIUS, 50, 200, 12, 100, -300) is True
+
+
+def test_direct_hit_on_right_paddle_moving_toward_it_is_true():
+    # Paddle 900..912 in x; ball centre 4 px from its left face.
+    assert ball_hits_paddle(896, 250, RADIUS, 900, 200, 12, 100, 300) is True
+
+
+def test_miss_above_paddle_is_false():
+    # Nearest point is (62, 200); distance sqrt(36 + 81) > 8.
+    assert ball_hits_paddle(68, 191, RADIUS, 50, 200, 12, 100, -300) is False
+
+
+def test_miss_below_paddle_is_false():
+    # Nearest point is (62, 300); distance sqrt(36 + 81) > 8.
+    assert ball_hits_paddle(68, 309, RADIUS, 50, 200, 12, 100, -300) is False
+
+
+def test_clearly_above_and_below_paddle_is_false():
+    assert ball_hits_paddle(56, 150, RADIUS, 50, 200, 12, 100, -300) is False
+    assert ball_hits_paddle(56, 350, RADIUS, 50, 200, 12, 100, -300) is False
+
+
+def test_overlapping_ball_moving_away_is_false():
+    # Left paddle, ball overlaps it but moves right (away).
+    assert ball_hits_paddle(68, 250, RADIUS, 50, 200, 12, 100, 300) is False
+    # Right paddle, ball overlaps it but moves left (away).
+    assert ball_hits_paddle(896, 250, RADIUS, 900, 200, 12, 100, -300) is False
+
+
+def test_zero_vx_is_never_a_hit():
+    assert ball_hits_paddle(68, 250, RADIUS, 50, 200, 12, 100, 0) is False
+    assert ball_hits_paddle(896, 250, RADIUS, 900, 200, 12, 100, 0) is False
+
+
+def test_boundary_exactly_one_radius_from_corner_is_hit():
+    # Top-left corner of the right paddle is (900, 200); centre 8 px to its left.
+    assert ball_hits_paddle(892, 200, RADIUS, 900, 200, 12, 100, 300) is True
+
+
+def test_boundary_one_pixel_farther_is_miss():
+    assert ball_hits_paddle(891, 200, RADIUS, 900, 200, 12, 100, 300) is False
+
+
+def test_hit_check_does_not_change_inputs_or_objects():
+    paddle = Paddle(50, 200, width=12, height=100)
+    ball = Ball(68, 250, -300, 0)
+    first = ball_hits_paddle(
+        ball.x,
+        ball.y,
+        ball.radius,
+        paddle.x,
+        paddle.y,
+        paddle.width,
+        paddle.height,
+        ball.vx,
+    )
+    second = ball_hits_paddle(
+        ball.x,
+        ball.y,
+        ball.radius,
+        paddle.x,
+        paddle.y,
+        paddle.width,
+        paddle.height,
+        ball.vx,
+    )
+    assert first is True and second is True
+    assert (ball.x, ball.y, ball.vx, ball.vy, ball.radius) == (68, 250, -300, 0, 8)
+    assert (paddle.x, paddle.y, paddle.width, paddle.height) == (50, 200, 12, 100)

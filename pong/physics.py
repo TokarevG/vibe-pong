@@ -144,3 +144,40 @@ class Ball:
         if bounces % 2 == 1:
             self.vy = -self.vy
         return bounces > 0
+
+
+def ball_hits_paddle(
+    ball_x: float,
+    ball_y: float,
+    ball_radius: float,
+    paddle_x: float,
+    paddle_y: float,
+    paddle_w: float,
+    paddle_h: float,
+    ball_vx: float,
+) -> bool:
+    """Return ``True`` if the ball touches the paddle while moving toward it.
+
+    ``(paddle_x, paddle_y)`` is the paddle's top-left corner. The paddle is on the
+    left when its centre ``x`` is less than ``ball_x``, otherwise on the right. A
+    hit needs ``ball_vx < 0`` for a paddle on the left and ``ball_vx > 0`` for a
+    paddle on the right, so ``ball_vx == 0`` is never a hit.
+
+    The ball overlaps the paddle when the distance from the ball centre to the
+    nearest point of the paddle rectangle is at most ``ball_radius``. A distance
+    exactly equal to the radius counts as a hit.
+
+    This function does not change any state.
+    """
+    paddle_on_left = paddle_x + paddle_w / 2 < ball_x
+    if paddle_on_left:
+        if not ball_vx < 0:
+            return False
+    elif not ball_vx > 0:
+        return False
+
+    nearest_x = min(max(ball_x, paddle_x), paddle_x + paddle_w)
+    nearest_y = min(max(ball_y, paddle_y), paddle_y + paddle_h)
+    dx = ball_x - nearest_x
+    dy = ball_y - nearest_y
+    return dx * dx + dy * dy <= ball_radius * ball_radius
