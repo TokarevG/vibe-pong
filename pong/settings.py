@@ -4,7 +4,9 @@ This module must not import pygame. It never reads the real environment or
 home directory itself; callers pass them in, so the logic can be tested.
 """
 
+import contextlib
 import json
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,6 +25,7 @@ RESERVED_KEY = "escape"
 # Stored names for the enums in the config file.
 _MODE_NAMES = {"single_player": Mode.SINGLE_PLAYER, "two_player": Mode.TWO_PLAYER}
 _DIFFICULTY_NAMES = {difficulty.value: difficulty for difficulty in Difficulty}
+_MODE_TO_NAME = {mode: name for name, mode in _MODE_NAMES.items()}
 
 
 def _default_bindings() -> dict[str, str]:
@@ -156,3 +159,74 @@ def load_settings(path: Path) -> Settings:
     if bindings is not None and not find_binding_conflicts(bindings):
         settings.bindings = bindings
     return settings
+
+
+def _settings_to_data(settings: Settings) -> dict[str, object]:
+    """Return the config-file object for ``settings``.
+
+    Applies the same rules as ``load_settings``. Raises ValueError for any
+    field that the loader would reject, so only valid settings reach disk.
+    """
+    if settings.mode not in _MODE_TO_NAME:
+        raise ValueError(f"mode must be a Mode, got {settings.mode!r}")
+    if not isinstance(settings.difficulty, Difficulty):
+        raise ValueError(  # noqa: TRY004 - the spec requires ValueError
+            f"difficulty must be a Difficulty, got {settings.difficulty!r}"
+        )
+    if not isinstance(settings.audio_enabled, bool):
+        raise ValueError(  # noqa: TRY004 - the spec requires ValueError
+            f"audio_enabled must be a bool, got {settings.audio_enabled!r}"
+        )
+    if _parse_volume(settings.volume) is None:
+        raise ValueError(
+            f"volume must be an int from 0 to 100, got {settings.volume!r}"
+        )
+    if not isinstance(settings.bindings, Mapping):
+        raise ValueError(  # noqa: TRY004 - the spec requires ValueError
+            f"bindings must be a mapping, got {settings.bindings!r}"
+        )
+    for action, key in settings.bindings.items():
+        if not isinstance(key, str) or not key:
+            raise ValueError(f"binding for {action!r} must be a non-empty string")
+    conflicts = find_binding_conflicts(settings.bindings)
+    if conflicts:
+        raise ValueError(f"bindings conflict for actions {conflicts}")
+    return {
+        "mode": _MODE_TO_NAME[settings.mode],
+        "difficulty": settings.difficulty.value,
+        "audio_enabled": settings.audio_enabled,
+        "volume": settings.volume,
+        "bindings": dict(settings.bindings),
+    }
+
+
+def save_settings(path: Path, settings: Settings) -> bool:
+    """Write ``settings`` to ``path`` as JSON. Return True on success.
+
+    Raises ValueError, and writes nothing, if any setting is invalid. Creates
+    missing parent directories. The file is written to a temporary file in
+    the same directory and then moved over ``path``, so a failed write never
+    leaves a truncated config. Returns False on OSError instead of raising.
+    """
+    data = _settings_to_data(settings)
+    text = json.dumps(data, indent=2) + "\n"
+    tmp: Path | None = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            tmp = Path(handle.name)
+            handle.write(text)
+        tmp.replace(path)
+    except OSError:
+        if tmp is not None:
+            with contextlib.suppress(OSError):
+                tmp.unlink()
+        return False
+    return True

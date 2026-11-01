@@ -2,6 +2,7 @@ import ast
 import dataclasses
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -13,6 +14,7 @@ from pong.settings import (
     default_settings,
     find_binding_conflicts,
     load_settings,
+    save_settings,
 )
 
 SETTINGS_SOURCE = Path(__file__).parent.parent / "settings.py"
@@ -448,3 +450,191 @@ def test_load_returns_a_new_object_each_call(tmp_path):
     first.bindings["p1_up"] = "x"
     assert load_settings(path).bindings["p1_up"] == "i"
     assert load_settings(tmp_path / "missing.json").bindings["p1_up"] == "w"
+
+
+def _custom_settings() -> Settings:
+    return Settings(
+        mode=Mode.TWO_PLAYER,
+        difficulty=Difficulty.HARD,
+        audio_enabled=False,
+        volume=35,
+        bindings={"p1_up": "i", "p1_down": "k", "p2_up": "o", "p2_down": "l"},
+    )
+
+
+def _config_files(directory: Path) -> list[str]:
+    return sorted(entry.name for entry in directory.iterdir())
+
+
+def test_save_returns_true_and_writes_the_file(tmp_path):
+    path = tmp_path / "config.json"
+    assert save_settings(path, _custom_settings()) is True
+    assert path.is_file()
+
+
+def test_save_creates_missing_parent_directories(tmp_path):
+    path = tmp_path / "missing" / "nested" / "pong" / "config.json"
+    assert save_settings(path, default_settings()) is True
+    assert path.is_file()
+    assert load_settings(path) == default_settings()
+
+
+def test_save_uses_the_same_field_names_and_value_formats_as_load(tmp_path):
+    path = tmp_path / "config.json"
+    save_settings(path, _custom_settings())
+    assert json.loads(path.read_text(encoding="utf-8")) == {
+        "mode": "two_player",
+        "difficulty": "hard",
+        "audio_enabled": False,
+        "volume": 35,
+        "bindings": {"p1_up": "i", "p1_down": "k", "p2_up": "o", "p2_down": "l"},
+    }
+
+
+def test_save_writes_single_player_and_easy_names(tmp_path):
+    path = tmp_path / "config.json"
+    save_settings(path, default_settings())
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["mode"] == "single_player"
+    assert data["difficulty"] == "medium"
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        default_settings(),
+        _custom_settings(),
+        Settings(mode=Mode.SINGLE_PLAYER, difficulty=Difficulty.EASY, volume=0),
+        Settings(volume=100, audio_enabled=False),
+        Settings(
+            bindings={"p1_up": "W", "p1_down": "a", "p2_up": "up", "p2_down": "x"}
+        ),
+    ],
+)
+def test_round_trip_returns_an_equal_settings(tmp_path, settings):
+    path = tmp_path / "config.json"
+    assert save_settings(path, settings) is True
+    assert load_settings(path) == settings
+
+
+def test_save_overwrites_an_existing_file(tmp_path):
+    path = _write_config(tmp_path / "config.json", {"volume": 5})
+    save_settings(path, _custom_settings())
+    assert load_settings(path) == _custom_settings()
+
+
+def test_save_leaves_no_temporary_files_behind(tmp_path):
+    path = tmp_path / "config.json"
+    save_settings(path, _custom_settings())
+    assert _config_files(tmp_path) == ["config.json"]
+
+
+def _bad(**fields: Any) -> Settings:
+    """Build a Settings with deliberately wrong field types for invalid-input tests."""
+    return Settings(**fields)
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        _bad(volume=101),
+        _bad(volume=-1),
+        _bad(volume=True),
+        _bad(volume=50.0),
+        _bad(volume="80"),
+        _bad(audio_enabled=1),
+        _bad(audio_enabled="yes"),
+        _bad(mode="two_player"),
+        _bad(mode=2),
+        _bad(difficulty="hard"),
+        _bad(difficulty=None),
+        _bad(bindings={"p1_up": "w", "p1_down": "w", "p2_up": "up", "p2_down": "down"}),
+        _bad(
+            bindings={
+                "p1_up": "escape",
+                "p1_down": "s",
+                "p2_up": "up",
+                "p2_down": "down",
+            }
+        ),
+        _bad(bindings={"p1_up": "w", "p1_down": "s", "p2_up": "up"}),
+        _bad(
+            bindings={
+                "p1_up": "w",
+                "p1_down": "s",
+                "p2_up": "up",
+                "pause": "x",
+                "p2_down": "down",
+            }
+        ),
+        _bad(bindings={"p1_up": "", "p1_down": "s", "p2_up": "up", "p2_down": "down"}),
+        _bad(bindings={"p1_up": 5, "p1_down": "s", "p2_up": "up", "p2_down": "down"}),
+        _bad(bindings=None),
+    ],
+)
+def test_invalid_settings_raise_value_error_and_write_nothing(tmp_path, settings):
+    path = tmp_path / "new_dir" / "config.json"
+    with pytest.raises(ValueError):
+        save_settings(path, settings)
+    assert not (tmp_path / "new_dir").exists()
+
+
+def test_invalid_settings_leave_an_existing_file_untouched(tmp_path):
+    path = _write_config(tmp_path / "config.json", _valid_file())
+    before = path.read_bytes()
+    with pytest.raises(ValueError):
+        save_settings(path, Settings(volume=500))
+    assert path.read_bytes() == before
+    assert _config_files(tmp_path) == ["config.json"]
+
+
+def test_failed_write_keeps_the_old_file_and_removes_temp_file(tmp_path, monkeypatch):
+    path = _write_config(tmp_path / "config.json", _valid_file())
+    before = path.read_bytes()
+
+    def fail_replace(self, target):
+        raise OSError("disk trouble")
+
+    monkeypatch.setattr(Path, "replace", fail_replace)
+    assert save_settings(path, _custom_settings()) is False
+    assert path.read_bytes() == before
+    assert _config_files(tmp_path) == ["config.json"]
+
+
+def test_failed_write_does_not_create_a_partial_file(tmp_path, monkeypatch):
+    path = tmp_path / "config.json"
+
+    def fail_replace(self, target):
+        raise OSError("disk trouble")
+
+    monkeypatch.setattr(Path, "replace", fail_replace)
+    assert save_settings(path, _custom_settings()) is False
+    assert not path.exists()
+    assert _config_files(tmp_path) == []
+
+
+def test_unwritable_location_returns_false_and_does_not_raise(tmp_path):
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory", encoding="utf-8")
+    path = blocker / "config.json"
+    assert save_settings(path, default_settings()) is False
+
+
+def test_target_that_is_a_directory_returns_false(tmp_path):
+    path = tmp_path / "config.json"
+    path.mkdir()
+    assert save_settings(path, default_settings()) is False
+    assert _config_files(tmp_path) == ["config.json"]
+
+
+def test_save_does_not_change_the_settings_object(tmp_path):
+    settings = _custom_settings()
+    before = Settings(
+        mode=settings.mode,
+        difficulty=settings.difficulty,
+        audio_enabled=settings.audio_enabled,
+        volume=settings.volume,
+        bindings=dict(settings.bindings),
+    )
+    save_settings(tmp_path / "config.json", settings)
+    assert settings == before
