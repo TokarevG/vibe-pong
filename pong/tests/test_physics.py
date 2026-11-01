@@ -403,6 +403,32 @@ def test_hit_check_does_not_change_inputs_or_objects():
     assert (paddle.x, paddle.y, paddle.width, paddle.height) == (50, 200, 12, 100)
 
 
+def test_ball_overlapping_left_paddle_after_crossing_its_centre_is_hit():
+    # Amended #6 example: ball centre (30) is on the paddle centre x (30).
+    assert ball_hits_paddle(30, 300, RADIUS, 24, 270, 12, 60, -900) is True
+
+
+@pytest.mark.parametrize("vx", [-700, -900])
+def test_qa_repro_ball_at_x50_overlapping_p1_moving_left_is_hit(vx):
+    # P1 is at (30, 250), 12 wide, 100 tall. Its right face is at x 42, so a
+    # ball at x 50 with radius 8 just touches it. The side is set by the
+    # midline, so the hit does not depend on the ball centre passing P1's centre x (36).
+    assert ball_hits_paddle(50, 300, RADIUS, 30, 250, 12, 100, vx) is True
+
+
+def test_ball_on_right_side_moving_left_is_not_a_hit():
+    # Right paddle centre x is 906, so it is on the right side; moving left is away.
+    assert ball_hits_paddle(896, 250, RADIUS, 900, 200, 12, 100, -900) is False
+    assert ball_hits_paddle(896, 250, RADIUS, 900, 200, 12, 100, -1) is False
+
+
+@pytest.mark.parametrize("paddle_x", [30, 900])
+def test_zero_vx_is_never_a_hit_even_when_overlapping(paddle_x):
+    assert (
+        ball_hits_paddle(paddle_x + 14, 250, RADIUS, paddle_x, 200, 12, 100, 0) is False
+    )
+
+
 def test_max_bounce_angle_is_60_degrees():
     assert MAX_BOUNCE_ANGLE_DEGREES == 60.0
 

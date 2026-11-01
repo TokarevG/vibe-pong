@@ -232,9 +232,12 @@ def ball_hits_paddle(
     """Return ``True`` if the ball touches the paddle while moving toward it.
 
     ``(paddle_x, paddle_y)`` is the paddle's top-left corner. The paddle is on the
-    left when its centre ``x`` is less than ``ball_x``, otherwise on the right. A
-    hit needs ``ball_vx < 0`` for a paddle on the left and ``ball_vx > 0`` for a
-    paddle on the right, so ``ball_vx == 0`` is never a hit.
+    left when its centre ``x`` (``paddle_x + paddle_w / 2``) is less than the
+    playfield midline at ``x == 500``, otherwise on the right. The side depends on
+    the paddle only, not on the ball, so a fast ball whose centre has already
+    crossed the paddle's centre in one step can still be hit. A hit needs
+    ``ball_vx < 0`` for a paddle on the left and ``ball_vx > 0`` for a paddle on
+    the right, so ``ball_vx == 0`` is never a hit.
 
     The ball overlaps the paddle when the distance from the ball centre to the
     nearest point of the paddle rectangle is at most ``ball_radius``. A distance
@@ -242,7 +245,7 @@ def ball_hits_paddle(
 
     This function does not change any state.
     """
-    paddle_on_left = paddle_x + paddle_w / 2 < ball_x
+    paddle_on_left = paddle_x + paddle_w / 2 < 500
     if paddle_on_left:
         if not ball_vx < 0:
             return False
