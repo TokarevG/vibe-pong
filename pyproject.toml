@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pong"
+version = "0.1.0"
+description = "Classic Pong with a Pygame front end"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff", "mypy"]
+
+[tool.setuptools.packages.find]
+include = ["pong*"]
+
+[tool.pytest.ini_options]
+testpaths = ["pong/tests"]
+
+[tool.mypy]
+files = ["pong"]
+python_version = "3.12"
+
+[tool.ruff]

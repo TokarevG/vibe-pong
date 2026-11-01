@@ -132,4 +132,4 @@ Description: Write `README.md` covering the Python version, creating a virtualen
 
 ## 33. Acceptance playtest
 Goal: Check the finished game against the acceptance criteria in `plan.md` §13.
-Description: Go through all fifteen items in `plan.md` §13 by playing the game and running the test suite. Record each item as pass or fail in a short note in `docs/`. File a new task for each failure rather than fixing it in this task.
+Description: Go through all fifteen items in `plan.md` §13 by playing the game and running the test suite. Record each item as pass or fail in a short note in `_docs/`. File a new task for each failure rather than fixing it in this task.
