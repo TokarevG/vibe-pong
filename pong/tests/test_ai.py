@@ -1,5 +1,6 @@
 import ast
 import dataclasses
+import itertools
 import math
 import random
 from pathlib import Path
@@ -254,3 +255,47 @@ def test_controller_does_not_import_paddle_or_ball_classes():
         if isinstance(node, ast.ImportFrom) and node.module:
             imported.append(node.module)
     assert not any(name.startswith("pong.") for name in imported)
+
+
+def look_frames(difficulty, dt, frames=200):
+    """Return the frame numbers on which the controller took a new look.
+
+    A look is seen as a call to rng.uniform(), which happens once per look.
+    """
+    rng = FixedOffsetRandom(0.0)
+    ctrl = AIController(difficulty, rng)
+    looks = []
+    for frame in range(frames):
+        before = len(rng.calls)
+        ctrl.update(dt, 0.0, 0.0)
+        if len(rng.calls) > before:
+            looks.append(frame)
+    return looks
+
+
+@pytest.mark.parametrize(
+    ("difficulty", "dt", "expected_frames"),
+    [
+        # 1/60 s steps (the game's frame rate). Delays from the issue: 0.10, 0.25, 0.40 s.
+        (Difficulty.HARD, 1 / 60, 6),
+        (Difficulty.MEDIUM, 1 / 60, 15),
+        (Difficulty.EASY, 1 / 60, 24),
+        # 1/120 s steps. Every delay is a whole number of frames.
+        (Difficulty.HARD, 1 / 120, 12),
+        (Difficulty.MEDIUM, 1 / 120, 30),
+        (Difficulty.EASY, 1 / 120, 48),
+        # 1/50 s steps. Medium's 0.25 s is 12.5 frames, so the first look at or
+        # after 0.25 s is on the 13th frame (0.26 s).
+        (Difficulty.HARD, 1 / 50, 5),
+        (Difficulty.MEDIUM, 1 / 50, 13),
+        (Difficulty.EASY, 1 / 50, 20),
+    ],
+)
+def test_looks_are_spaced_by_the_expected_number_of_frames(
+    difficulty, dt, expected_frames
+):
+    looks = look_frames(difficulty, dt)
+    assert looks[0] == 0
+    gaps = [later - earlier for earlier, later in itertools.pairwise(looks)]
+    assert len(gaps) >= 4
+    assert gaps == [expected_frames] * len(gaps)

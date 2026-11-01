@@ -43,6 +43,13 @@ AI_SETTINGS: dict[Difficulty, AISettings] = {
 DEAD_ZONE = 4.0
 """Distance in px within which the AI paddle holds still, so it does not jitter."""
 
+_LOOK_TOLERANCE = 1e-9
+"""Seconds of slack when checking the reaction delay.
+
+Summing a frame step such as 1/60 s six times gives 0.09999999999999999, not 0.1.
+Without this slack a look would slip one frame late.
+"""
+
 
 class AIController:
     """Decides which way the computer paddle should move.
@@ -75,7 +82,8 @@ class AIController:
         """
         self._since_look += dt
         if self._target is None or (
-            dt > 0 and self._since_look >= self._settings.reaction_delay
+            dt > 0
+            and self._since_look >= self._settings.reaction_delay - _LOOK_TOLERANCE
         ):
             aim_error = self._settings.aim_error
             self._target = ball_y + self._rng.uniform(-aim_error, aim_error)
