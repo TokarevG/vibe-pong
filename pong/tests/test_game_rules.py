@@ -539,6 +539,68 @@ def test_p2_hit_pushes_ball_to_the_left_face_and_sends_it_left():
     assert match.ball.vx == pytest.approx(-900.0)
 
 
+def test_p2_hit_at_exact_centre_x_goes_to_the_left_face_regression():
+    # Regression: P2 at x 958 has its centre at 964. The ball is at exactly 964 and
+    # moves right at 900 px/s, so it ends at 982. It came from the left, so it must be
+    # pushed to the left face (958 - 8 = 950), not the right face.
+    match = rally_match()
+    match.ball.x = 964.0
+    match.ball.y = 300.0
+    match.ball.vx = 900.0
+    events = match.update(DT, 0, 0)
+    assert events == [GameEvent.PADDLE_HIT]
+    assert match.ball.x == pytest.approx(950.0)
+    assert match.ball.y == pytest.approx(300.0)
+    assert match.ball.vx == pytest.approx(-900.0)
+
+
+def test_p2_hit_at_exact_centre_x_slow_ball_goes_to_the_left_face():
+    # Same tie at a slower speed: the ball ends at 970, still on the left-face side.
+    match = rally_match()
+    match.ball.x = 964.0
+    match.ball.y = 300.0
+    match.ball.vx = 300.0
+    assert match.update(DT, 0, 0) == [GameEvent.PADDLE_HIT]
+    assert match.ball.x == pytest.approx(950.0)
+    assert match.ball.vx < 0
+
+
+def test_p1_hit_at_exact_centre_x_goes_to_the_right_face():
+    # P1 at x 30 has its centre at 36. The ball starts at exactly 36 moving left.
+    match = rally_match()
+    match.ball.x = 36.0
+    match.ball.y = 300.0
+    match.ball.vx = -300.0
+    assert match.update(DT, 0, 0) == [GameEvent.PADDLE_HIT]
+    assert match.ball.x == pytest.approx(50.0)
+    assert match.ball.vx > 0
+
+
+def test_p1_hit_from_right_with_centre_left_of_midline_goes_to_right_face():
+    # The ball starts left of P1's centre x (36) but is moving left, so it came from
+    # the right. It must go to the right face (50), not the left face.
+    match = rally_match()
+    match.ball.x = 33.0
+    match.ball.y = 300.0
+    match.ball.vx = -900.0
+    assert match.update(DT, 0, 0) == [GameEvent.PADDLE_HIT]
+    assert match.ball.x == pytest.approx(50.0)
+    assert match.ball.vx == pytest.approx(900.0)
+
+
+def test_p2_ball_already_clear_of_the_left_face_is_not_moved():
+    # At dt 0 the ball stays at 950, which is one radius clear of P2's left face
+    # (958 - 8). It still touches the paddle, so it is a hit, and the push leaves it.
+    match = rally_match()
+    match.ball.x = 950.0
+    match.ball.y = 300.0
+    match.ball.vx = 900.0
+    assert match.update(0.0, 0, 0) == [GameEvent.PADDLE_HIT]
+    assert match.ball.x == 950.0
+    assert match.ball.y == 300.0
+    assert match.ball.vx == pytest.approx(-900.0)
+
+
 def test_ball_already_one_radius_clear_of_the_face_is_not_moved():
     # At dt 0 the ball stays where it is: centre x 50 is already one radius clear of
     # P1's right face (42 + 8), and it still touches the paddle's corner, so it is a hit.
@@ -572,8 +634,8 @@ def test_ball_is_never_left_behind_the_paddle_on_the_near_side():
 
 
 def test_ball_is_never_left_behind_p2_on_the_near_side():
-    # Mirror of the P1 sweep: the ball approaches P2 from the left (x below 964). The
-    # tie at exactly 964 is left out: the rule's "at or right" then picks the right face.
+    # Mirror of the P1 sweep: the ball approaches P2 from the left (x below 964). Each
+    # hit must go to P2's left face, which is the face it came from.
     hits = 0
     for x0 in [944.0 + i for i in range(20)]:
         for vx0 in (300.0, 700.0, 900.0):

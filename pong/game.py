@@ -267,7 +267,7 @@ class Match:
 
         ``direction`` is the horizontal direction the ball leaves in: +1 for P1's
         paddle, -1 for P2's. The new speed is ``next_speed`` of the current speed.
-        The ball is then pushed out to the paddle face it is nearer to (see
+        The ball is then pushed out to the face it came from (see
         ``_push_clear_of_face``), and its velocity is set as ``bounce_velocity`` gives.
         """
         corners = _path_corners(before, dt, self.ball.x, self.ball.y)
@@ -295,20 +295,21 @@ class Match:
         self.ball.vx, self.ball.vy = bounce_velocity(
             offset, speed, direction, paddle.velocity
         )
-        self._push_clear_of_face(paddle, before.x)
+        self._push_clear_of_face(paddle, direction)
         return True
 
-    def _push_clear_of_face(self, paddle: Paddle, from_x: float) -> None:
-        """Move the ball so its centre is one radius clear of the face nearer its centre.
+    def _push_clear_of_face(self, paddle: Paddle, direction: int) -> None:
+        """Move the ball so its centre is one radius clear of the face it came from.
 
-        ``from_x`` is the ball's centre x before the step. At or right of the
-        paddle's centre x, the right face is used: the ball's x is at least the
-        paddle's right edge plus the radius. Otherwise the left face is used: x is at
-        most the paddle's left edge minus the radius. A ball already clear of the
-        face is not moved. Y is unchanged.
+        ``direction`` is +1 for a P1 hit and -1 for a P2 hit. The ball came from the
+        side opposite its direction before the hit, and ``Ball.step`` never changes
+        ``vx``, so this is the sign of ``vx`` before the step too. For a P1 hit the
+        ball's x is at least the paddle's right edge plus the radius. For a P2 hit it
+        is at most the paddle's left edge minus the radius. A ball already clear of
+        that face is not moved. Y is unchanged.
         """
         radius = self.ball.radius
-        if from_x >= paddle.x + paddle.width / 2:
+        if direction > 0:
             self.ball.x = max(self.ball.x, paddle.x + paddle.width + radius)
         else:
             self.ball.x = min(self.ball.x, paddle.x - radius)
