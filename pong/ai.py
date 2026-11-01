@@ -4,6 +4,7 @@ This module must not import pygame, so the tuning can be tested without a window
 The values here are starting points and may change during playtesting.
 """
 
+import random
 from dataclasses import dataclass
 from enum import Enum
 
@@ -38,3 +39,51 @@ AI_SETTINGS: dict[Difficulty, AISettings] = {
     Difficulty.HARD: AISettings(reaction_delay=0.10, max_speed=420.0, aim_error=10.0),
 }
 """Tuning values for each difficulty. This is the only place they are defined."""
+
+DEAD_ZONE = 4.0
+"""Distance in px within which the AI paddle holds still, so it does not jitter."""
+
+
+class AIController:
+    """Decides which way the computer paddle should move.
+
+    The controller takes a look at the ball's y position on its first ``update``
+    and then again each ``reaction_delay`` seconds. Between looks it keeps aiming
+    at the position it last saw. Each look adds a random aim error drawn from
+    ``rng``. It returns a direction only; how fast the paddle moves is up to the
+    caller, using ``max_speed``.
+    """
+
+    def __init__(self, difficulty: Difficulty, rng: random.Random) -> None:
+        self._settings = AI_SETTINGS[difficulty]
+        self._rng = rng
+        self._target: float | None = None
+        self._since_look = 0.0
+
+    @property
+    def max_speed(self) -> float:
+        """Fastest the AI paddle can move, in px/s, for this difficulty."""
+        return self._settings.max_speed
+
+    def update(self, dt: float, ball_y: float, paddle_center_y: float) -> int:
+        """Return -1 to move up, 1 to move down, or 0 to hold still.
+
+        Args:
+            dt: seconds since the previous call. 0 means no time has passed.
+            ball_y: the ball's current y position, in px.
+            paddle_center_y: the AI paddle's current centre y, in px.
+        """
+        self._since_look += dt
+        if self._target is None or (
+            dt > 0 and self._since_look >= self._settings.reaction_delay
+        ):
+            aim_error = self._settings.aim_error
+            self._target = ball_y + self._rng.uniform(-aim_error, aim_error)
+            self._since_look = 0.0
+        target = self._target
+
+        if target - paddle_center_y > DEAD_ZONE:
+            return 1
+        if paddle_center_y - target > DEAD_ZONE:
+            return -1
+        return 0
