@@ -24,6 +24,8 @@ DOWN = MenuAction.DOWN
 UP = MenuAction.UP
 ENTER = MenuAction.ENTER
 BACK = MenuAction.BACK
+LEFT = MenuAction.LEFT
+RIGHT = MenuAction.RIGHT
 
 
 @pytest.fixture(autouse=True)
@@ -117,6 +119,8 @@ def test_navigation_keys_are_the_arrows_enter_and_escape():
     assert main_module._MENU_KEYS == {
         pygame.K_UP: UP,
         pygame.K_DOWN: DOWN,
+        pygame.K_LEFT: LEFT,
+        pygame.K_RIGHT: RIGHT,
         pygame.K_RETURN: ENTER,
         pygame.K_ESCAPE: BACK,
     }
@@ -257,41 +261,6 @@ def test_failed_save_keeps_the_value_for_this_session(tmp_path):
     assert menu.settings.difficulty is Difficulty.HARD
 
 
-# Audio placeholder. Controls has its own tests in test_controls_screen.py.
-
-
-@pytest.mark.parametrize("closer", [ENTER, BACK])
-def test_audio_placeholder_opens_and_returns_to_the_main_menu(
-    tmp_path, closer: MenuAction
-):
-    menu = _menu(tmp_path)
-    _highlight(menu, MenuItem.AUDIO)
-    assert menu.handle(ENTER) is MenuOutcome.NONE
-    assert menu.page is MenuPage.AUDIO
-    assert "Not yet available" in menu.lines()
-
-    assert menu.handle(closer) is MenuOutcome.NONE
-    assert menu.page is MenuPage.MAIN
-    assert menu.selected is MenuItem.AUDIO
-
-
-def test_audio_placeholder_ignores_up_and_down(tmp_path):
-    menu = _menu(tmp_path)
-    _highlight(menu, MenuItem.AUDIO)
-    menu.handle(ENTER)
-    menu.handle(DOWN)
-    menu.handle(UP)
-    assert menu.page is MenuPage.AUDIO
-
-
-def test_audio_placeholder_does_not_change_settings(tmp_path):
-    menu = _menu(tmp_path)
-    _highlight(menu, MenuItem.AUDIO)
-    menu.handle(ENTER)
-    menu.handle(ENTER)
-    assert menu.settings == default_settings()
-
-
 # Drawing
 
 
@@ -309,15 +278,6 @@ def test_draw_menu_paints_the_highlighted_line_white(tmp_path):
     main_module.draw_menu(surface, menu)
     assert not _has_white_in_band(surface, 40, 80)
     assert _has_white_in_band(surface, 96, 136)
-
-
-def test_draw_menu_draws_placeholder_screen(tmp_path):
-    surface = pygame.Surface((1000, 600))
-    menu = _menu(tmp_path)
-    _highlight(menu, MenuItem.AUDIO)
-    menu.handle(ENTER)
-    main_module.draw_menu(surface, menu)
-    assert _lit_pixels(surface) > 0
 
 
 def test_draw_menu_does_nothing_for_zero_size(tmp_path):

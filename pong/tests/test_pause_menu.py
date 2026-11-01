@@ -120,7 +120,9 @@ def test_arrow_and_enter_keys_drive_the_pause_menu():
     assert main_module._handle_pause_key(pygame.K_RETURN, menu) is (PauseOutcome.RESUME)
 
 
-@pytest.mark.parametrize("key", [pygame.K_w, pygame.K_s, pygame.K_SPACE])
+@pytest.mark.parametrize(
+    "key", [pygame.K_w, pygame.K_s, pygame.K_SPACE, pygame.K_LEFT, pygame.K_RIGHT]
+)
 def test_non_navigation_keys_do_nothing_in_the_pause_menu(key: int):
     menu = PauseMenu()
     assert main_module._handle_pause_key(key, menu) is PauseOutcome.NONE

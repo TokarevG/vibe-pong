@@ -243,6 +243,8 @@ class MenuAction(Enum):
 
     UP = auto()
     DOWN = auto()
+    LEFT = auto()
+    RIGHT = auto()
     ENTER = auto()
     BACK = auto()
 
@@ -256,7 +258,7 @@ class MenuOutcome(Enum):
 
 
 class MenuPage(Enum):
-    """Which menu screen is showing. AUDIO is a placeholder for now."""
+    """Which menu screen is showing."""
 
     MAIN = auto()
     CONTROLS = auto()
@@ -269,8 +271,6 @@ _DIFFICULTY_LABELS = {
     Difficulty.MEDIUM: "Medium",
     Difficulty.HARD: "Hard",
 }
-_PLACEHOLDER_TITLES = {MenuPage.AUDIO: "Audio"}
-_ITEM_PAGES = {MenuItem.AUDIO: MenuPage.AUDIO}
 
 
 def _next_value[T](values: list[T], current: T) -> T:
@@ -387,13 +387,81 @@ class ControlsScreen:
         save_settings(self.path, self.settings)
 
 
+class AudioItem(Enum):
+    """Rows of the Audio screen, top to bottom."""
+
+    SOUND = auto()
+    VOLUME = auto()
+    BACK = auto()
+
+
+AUDIO_ITEMS: tuple[AudioItem, ...] = tuple(AudioItem)
+VOLUME_STEP = 10
+"""How much one Left or Right press changes the volume, in percentage points."""
+
+
+class AudioScreen:
+    """The Audio screen's state: the highlighted row and the audio settings.
+
+    Enter on Sound toggles it between On and Off. Left and Right on Volume change
+    the volume by ``VOLUME_STEP`` and stop at 0 and 100. Volume can change while
+    sound is off. Each change is written to ``path`` at once, and a failed write
+    still applies for this session. Back, Enter on Back and Esc close the screen,
+    which ``handle`` reports by returning True.
+    """
+
+    def __init__(self, settings: Settings, path: Path) -> None:
+        self.settings = settings
+        self.path = path
+        self.highlight = 0
+
+    @property
+    def selected(self) -> AudioItem:
+        """Return the highlighted row."""
+        return AUDIO_ITEMS[self.highlight]
+
+    def lines(self) -> list[str]:
+        """Return the text of each row, top to bottom."""
+        sound = "On" if self.settings.audio_enabled else "Off"
+        return [f"Sound: {sound}", f"Volume: {self.settings.volume}", "Back"]
+
+    def handle(self, action: MenuAction) -> bool:
+        """Apply one navigation action. Return True when the screen should close."""
+        if action is MenuAction.BACK:
+            return True
+        if action is MenuAction.UP:
+            self.highlight = (self.highlight - 1) % len(AUDIO_ITEMS)
+        elif action is MenuAction.DOWN:
+            self.highlight = (self.highlight + 1) % len(AUDIO_ITEMS)
+        elif action is MenuAction.ENTER:
+            if self.selected is AudioItem.BACK:
+                return True
+            if self.selected is AudioItem.SOUND:
+                self.settings.audio_enabled = not self.settings.audio_enabled
+                self._save()
+        elif action in (MenuAction.LEFT, MenuAction.RIGHT) and (
+            self.selected is AudioItem.VOLUME
+        ):
+            step = -VOLUME_STEP if action is MenuAction.LEFT else VOLUME_STEP
+            volume = min(100, max(0, self.settings.volume + step))
+            if volume != self.settings.volume:
+                self.settings.volume = volume
+                self._save()
+        return False
+
+    def _save(self) -> None:
+        # save_settings returns False when the file cannot be written. The value
+        # is already in self.settings, so it still applies for this session.
+        save_settings(self.path, self.settings)
+
+
 class MainMenu:
     """The main menu's state: the screen, the highlighted row and the settings.
 
     ``settings`` is the object the rest of the program reads, so a change made
     here applies at once. A mode or difficulty change is written to ``path``
     straight away. If the write fails the value still applies for this session.
-    The Controls screen is opened from here and handles its own key bindings.
+    The Controls and Audio screens are opened from here and handle their own keys.
     """
 
     def __init__(self, settings: Settings, path: Path) -> None:
@@ -402,6 +470,7 @@ class MainMenu:
         self.page = MenuPage.MAIN
         self.highlight = 0
         self.controls = ControlsScreen(settings, path)
+        self.audio = AudioScreen(settings, path)
 
     @property
     def selected(self) -> MenuItem:
@@ -415,7 +484,9 @@ class MainMenu:
             return self.highlight
         if self.page is MenuPage.CONTROLS:
             return self.controls.highlight
-        return 0
+        if self.page is MenuPage.AUDIO:
+            return self.audio.highlight
+        return self.highlight
 
     @property
     def capturing(self) -> bool:
@@ -430,12 +501,8 @@ class MainMenu:
         """Return the text of each line of the current screen, top to bottom."""
         if self.page is MenuPage.CONTROLS:
             return self.controls.lines()
-        if self.page is not MenuPage.MAIN:
-            return [
-                _PLACEHOLDER_TITLES[self.page],
-                "Not yet available",
-                "Press Esc or Enter to go back",
-            ]
+        if self.page is MenuPage.AUDIO:
+            return self.audio.lines()
         labels = {
             MenuItem.START_GAME: "Start Game",
             MenuItem.MODE: f"Mode: {_MODE_LABELS[self.settings.mode]}",
@@ -454,8 +521,8 @@ class MainMenu:
             if self.controls.handle(action):
                 self.page = MenuPage.MAIN
             return MenuOutcome.NONE
-        if self.page is not MenuPage.MAIN:
-            if action in (MenuAction.ENTER, MenuAction.BACK):
+        if self.page is MenuPage.AUDIO:
+            if self.audio.handle(action):
                 self.page = MenuPage.MAIN
             return MenuOutcome.NONE
         if action is MenuAction.UP:
@@ -465,7 +532,7 @@ class MainMenu:
             self.highlight = (self.highlight + 1) % len(MENU_ITEMS)
             return MenuOutcome.NONE
         if action is not MenuAction.ENTER:
-            # Esc does nothing on the main menu.
+            # Esc, Left and Right do nothing on the main menu.
             return MenuOutcome.NONE
 
         item = self.selected
@@ -485,8 +552,10 @@ class MainMenu:
             # A fresh screen each time, so it opens with no wait and no message.
             self.controls = ControlsScreen(self.settings, self.path)
             self.page = MenuPage.CONTROLS
-        else:
-            self.page = _ITEM_PAGES[item]
+        elif item is MenuItem.AUDIO:
+            # A fresh screen each time, so it opens on the Sound row.
+            self.audio = AudioScreen(self.settings, self.path)
+            self.page = MenuPage.AUDIO
         return MenuOutcome.NONE
 
     def _save(self) -> None:
@@ -498,6 +567,8 @@ class MainMenu:
 _MENU_KEYS: dict[int, MenuAction] = {
     pygame.K_UP: MenuAction.UP,
     pygame.K_DOWN: MenuAction.DOWN,
+    pygame.K_LEFT: MenuAction.LEFT,
+    pygame.K_RIGHT: MenuAction.RIGHT,
     pygame.K_RETURN: MenuAction.ENTER,
     pygame.K_ESCAPE: MenuAction.BACK,
 }
@@ -591,6 +662,9 @@ class PauseMenu:
             return PauseOutcome.NONE
         if action is MenuAction.BACK:
             return PauseOutcome.RESUME
+        if action is not MenuAction.ENTER:
+            # Left and Right do nothing in the pause menu.
+            return PauseOutcome.NONE
         return _PAUSE_OUTCOMES[self.selected]
 
 
