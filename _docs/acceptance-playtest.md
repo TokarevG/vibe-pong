@@ -1,7 +1,6 @@
 # Acceptance playtest
 
 Issue: #33 (Acceptance playtest)
-Criteria: `_outdated/plan.md` §13, items 1 to 15.
 
 ## Status
 
