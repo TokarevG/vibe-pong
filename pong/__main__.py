@@ -4,13 +4,18 @@ Run with ``python -m pong``. This is the only module that imports pygame.
 """
 
 import functools
+import os
+import random
 import sys
+from pathlib import Path
+from typing import Protocol
 
 import pygame
 
-from pong.ai import Difficulty
+from pong.ai import AIController
 from pong.game import Match, Mode, Player
 from pong.playfield import PLAYFIELD_HEIGHT, PLAYFIELD_WIDTH, fit_playfield
+from pong.settings import Settings, config_path, default_settings, load_settings
 
 FPS = 60
 # Longest step the simulation may take in one frame, so a slow frame cannot
@@ -125,26 +130,89 @@ def draw_frame(surface: pygame.Surface, match: Match) -> None:
         )
 
 
+class _PressedKeys(Protocol):
+    """What ``pygame.key.get_pressed()`` returns: held state indexed by key code."""
+
+    def __getitem__(self, key_code: int) -> bool: ...
+
+
+_DEFAULT_KEYS = default_settings().bindings
+
+
+def _direction(up_pressed: bool, down_pressed: bool) -> int:
+    """Return -1 for up only, +1 for down only, and 0 for neither or both."""
+    if up_pressed == down_pressed:
+        return 0
+    return -1 if up_pressed else 1
+
+
+def _key_code(key_name: str, action: str) -> int:
+    """Return the Pygame key code for a stored key name.
+
+    An unknown name falls back to the action's default key, as ``load_settings``
+    does for other bad values.
+    """
+    try:
+        return pygame.key.key_code(key_name)
+    except ValueError:
+        return pygame.key.key_code(_DEFAULT_KEYS[action])
+
+
+def _read_directions(
+    pressed: _PressedKeys,
+    settings: Settings,
+    match: Match,
+    ai: AIController,
+    dt: float,
+) -> tuple[int, int]:
+    """Return ``(p1_direction, p2_direction)`` for this frame.
+
+    The key names are read from ``settings.bindings`` on every call, so a rebinding
+    applies on the next frame. P2 follows the keys in two-player mode and the AI in
+    single-player, where the P2 keys are ignored. ``ai.update`` is called with
+    ``dt`` and the ball and P2 paddle positions, and only in single-player.
+    """
+    codes = {
+        action: _key_code(key_name, action)
+        for action, key_name in settings.bindings.items()
+    }
+    p1_direction = _direction(pressed[codes["p1_up"]], pressed[codes["p1_down"]])
+    if match.mode is Mode.SINGLE_PLAYER:
+        p2_centre_y = match.p2.y + match.p2.height / 2
+        p2_direction = ai.update(dt, match.ball.y, p2_centre_y)
+    else:
+        p2_direction = _direction(pressed[codes["p2_up"]], pressed[codes["p2_down"]])
+    return p1_direction, p2_direction
+
+
 def main() -> int:
     pygame.init()
+    # Loaded once. Bindings are read from this object each frame, not the file.
+    settings = load_settings(config_path(os.environ, Path.home()))
     screen = pygame.display.set_mode(
         (PLAYFIELD_WIDTH, PLAYFIELD_HEIGHT), pygame.RESIZABLE
     )
     pygame.display.set_caption("Pong")
     clock = pygame.time.Clock()
-    match = Match(Mode.TWO_PLAYER, Difficulty.MEDIUM)
+    match = Match(settings.mode, settings.difficulty)
+    ai = AIController(settings.difficulty, random.Random())
 
     running = True
     while running:
-        # Seconds since the previous frame, capped at MAX_DT. Nothing consumes
-        # it yet; the movement step will use it once it exists.
-        _dt = min(clock.tick(FPS) / 1000.0, MAX_DT)
+        # Seconds since the previous frame, capped at MAX_DT, so a paddle or the
+        # ball moves the same distance per second whatever the frame rate.
+        dt = min(clock.tick(FPS) / 1000.0, MAX_DT)
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.VIDEORESIZE and event.w > 0 and event.h > 0:
                 screen = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE)
+
+        p1_direction, p2_direction = _read_directions(
+            pygame.key.get_pressed(), settings, match, ai, dt
+        )
+        match.update(dt, p1_direction, p2_direction)
 
         draw_frame(screen, match)
         pygame.display.flip()
