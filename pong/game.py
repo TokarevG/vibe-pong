@@ -164,9 +164,17 @@ class Match:
     def __init__(self, mode: Mode, difficulty: Difficulty) -> None:
         self.mode = mode
         self.difficulty = difficulty
+        self._reset()
+
+    def _reset(self) -> None:
+        """Set the paddles, score, ball and serving state to a fresh match.
+
+        Shared by ``__init__`` and ``restart``. Reads ``difficulty`` only in
+        single-player, to set P2's speed.
+        """
         p2_speed = (
-            AI_SETTINGS[difficulty].max_speed
-            if mode is Mode.SINGLE_PLAYER
+            AI_SETTINGS[self.difficulty].max_speed
+            if self.mode is Mode.SINGLE_PLAYER
             else DEFAULT_PADDLE_SPEED
         )
         self.p1 = Paddle(x=30, y=250, speed=DEFAULT_PADDLE_SPEED)
@@ -176,6 +184,16 @@ class Match:
         self._serving = True
         self._serve_toward = Player.P1
         self.paused = False
+
+    def restart(self) -> None:
+        """Reset to a fresh 0 to 0 match, with the ball waiting to serve.
+
+        Clears any winner, unpauses, and puts the paddles back at their starting
+        positions. The first serve goes toward P1, as in a new match. ``mode`` and
+        ``difficulty`` are kept. The AI controller is not reset here; the caller
+        makes a new one.
+        """
+        self._reset()
 
     @property
     def serving(self) -> bool:

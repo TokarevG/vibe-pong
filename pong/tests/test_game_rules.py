@@ -730,3 +730,93 @@ def test_toggle_pause_does_nothing_once_there_is_a_winner():
     assert match.paused is False
     match.toggle_pause()
     assert match.paused is False
+
+
+def test_restart_sets_score_back_to_zero_with_a_new_score_and_clears_winner():
+    match = rally_match()
+    old_score = match.score
+    for _ in range(11):
+        match.score.award(Player.P1)
+    assert match.score.winner() is Player.P1
+    match.restart()
+    assert match.score is not old_score
+    assert match.score.points(Player.P1) == 0
+    assert match.score.points(Player.P2) == 0
+    assert match.score.winner() is None
+
+
+def test_restart_puts_paddles_back_at_their_starting_positions():
+    match = rally_match()
+    match.update(0.5, 1, -1)
+    match.restart()
+    assert (match.p1.x, match.p1.y) == (30, 250)
+    assert (match.p2.x, match.p2.y) == (958, 250)
+    assert match.p1.velocity == 0.0
+    assert match.p2.velocity == 0.0
+
+
+def test_restart_centres_ball_with_zero_velocity_and_serving_state():
+    match = rally_match()
+    match.update(DT, 0, 0)
+    match.restart()
+    assert (match.ball.x, match.ball.y) == (500, 300)
+    assert (match.ball.vx, match.ball.vy) == (0, 0)
+    assert match.serving is True
+
+
+def test_first_serve_after_restart_goes_toward_p1():
+    match = new_match()
+    match.start_rally()
+    match.end_rally(Player.P1)
+    match.restart()
+    match.start_rally()
+    assert match.ball.vx < 0
+    assert (match.ball.vx, match.ball.vy) == (-SERVE_SPEED, 0.0)
+
+
+def test_restart_unpauses_a_paused_match():
+    match = rally_match()
+    match.toggle_pause()
+    assert match.paused is True
+    match.restart()
+    assert match.paused is False
+
+
+def test_restart_keeps_mode_and_difficulty_after_a_finished_match():
+    match = Match(Mode.SINGLE_PLAYER, Difficulty.HARD)
+    match.start_rally()
+    for _ in range(11):
+        match.score.award(Player.P2)
+    assert match.score.winner() is Player.P2
+    match.restart()
+    assert match.mode is Mode.SINGLE_PLAYER
+    assert match.difficulty is Difficulty.HARD
+    assert match.score.winner() is None
+
+
+def test_restart_keeps_two_player_mode_and_difficulty():
+    match = Match(Mode.TWO_PLAYER, Difficulty.EASY)
+    for _ in range(11):
+        match.score.award(Player.P1)
+    match.restart()
+    assert match.mode is Mode.TWO_PLAYER
+    assert match.difficulty is Difficulty.EASY
+
+
+def test_restart_keeps_single_player_p2_speed_for_the_difficulty():
+    match = Match(Mode.SINGLE_PLAYER, Difficulty.EASY)
+    match.restart()
+    assert match.p2.speed == AI_SETTINGS[Difficulty.EASY].max_speed == 240.0
+
+
+def test_update_moves_paddles_and_ball_normally_after_restart_and_rally_start():
+    match = new_match()
+    match.restart()
+    match.start_rally()
+    p1_before = match.p1.y
+    p2_before = match.p2.y
+    x_before = match.ball.x
+    match.update(0.1, 1, -1)
+    assert match.p1.y == p1_before + 420 * 0.1
+    assert match.p2.y == p2_before - 420 * 0.1
+    assert match.ball.x == x_before - SERVE_SPEED * 0.1
