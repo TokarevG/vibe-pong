@@ -17,9 +17,11 @@ from pong.ai import AIController, Difficulty
 from pong.game import Match, Mode, Player
 from pong.playfield import PLAYFIELD_HEIGHT, PLAYFIELD_WIDTH, fit_playfield
 from pong.settings import (
+    RESERVED_KEY,
     Settings,
     config_path,
     default_settings,
+    find_binding_conflicts,
     load_settings,
     save_settings,
 )
@@ -254,7 +256,7 @@ class MenuOutcome(Enum):
 
 
 class MenuPage(Enum):
-    """Which menu screen is showing. CONTROLS and AUDIO are placeholders for now."""
+    """Which menu screen is showing. AUDIO is a placeholder for now."""
 
     MAIN = auto()
     CONTROLS = auto()
@@ -267,13 +269,122 @@ _DIFFICULTY_LABELS = {
     Difficulty.MEDIUM: "Medium",
     Difficulty.HARD: "Hard",
 }
-_PLACEHOLDER_TITLES = {MenuPage.CONTROLS: "Controls", MenuPage.AUDIO: "Audio"}
-_ITEM_PAGES = {MenuItem.CONTROLS: MenuPage.CONTROLS, MenuItem.AUDIO: MenuPage.AUDIO}
+_PLACEHOLDER_TITLES = {MenuPage.AUDIO: "Audio"}
+_ITEM_PAGES = {MenuItem.AUDIO: MenuPage.AUDIO}
 
 
 def _next_value[T](values: list[T], current: T) -> T:
     """Return the value after ``current`` in ``values``, wrapping to the first."""
     return values[(values.index(current) + 1) % len(values)]
+
+
+# The Controls screen. Its state and logic use no pygame names. Key names come
+# in as Pygame reports them (e.g. "w", "up") through ``ControlsScreen.capture``.
+
+CONTROL_ACTION_LABELS: dict[str, str] = {
+    "p1_up": "Player 1 up",
+    "p1_down": "Player 1 down",
+    "p2_up": "Player 2 up",
+    "p2_down": "Player 2 down",
+}
+"""The rebindable actions, in the order their rows are shown, with their labels."""
+_CONTROL_ACTIONS: tuple[str, ...] = tuple(CONTROL_ACTION_LABELS)
+_CONTROLS_BACK_ROW = len(_CONTROL_ACTIONS)
+"""Index of the Back row, which follows the four action rows."""
+WAITING_TEXT = "Press a key"
+
+
+class ControlsScreen:
+    """The Controls screen's state: the highlighted row, the wait for a key and a message.
+
+    Rows 0 to 3 are the paddle actions and row 4 is Back. Enter on an action row
+    waits for the next key press. Esc cancels the wait. Any other key becomes the
+    binding if no other action uses it, and is saved. Otherwise the binding is
+    unchanged and ``message`` says which action already uses the key. A new
+    binding is written to the ``settings`` object at once, so the game reads it on
+    the next frame. A failed save still applies for this session.
+    """
+
+    def __init__(self, settings: Settings, path: Path) -> None:
+        self.settings = settings
+        self.path = path
+        self.highlight = 0
+        self.waiting = False
+        self.message = ""
+
+    def lines(self) -> list[str]:
+        """Return the text of each row, then the message line."""
+        rows = []
+        for index, action in enumerate(_CONTROL_ACTIONS):
+            label = CONTROL_ACTION_LABELS[action]
+            if self.waiting and index == self.highlight:
+                rows.append(f"{label}: {WAITING_TEXT}")
+            else:
+                rows.append(f"{label}: {self.settings.bindings[action].upper()}")
+        rows.append("Back")
+        rows.append(self.message)
+        return rows
+
+    def handle(self, action: MenuAction) -> bool:
+        """Apply one navigation action. Return True when the screen should close."""
+        if self.waiting:
+            if action is MenuAction.BACK:
+                self.waiting = False
+            return False
+        if action is MenuAction.BACK:
+            return True
+        if action is MenuAction.UP:
+            self.highlight = (self.highlight - 1) % (_CONTROLS_BACK_ROW + 1)
+        elif action is MenuAction.DOWN:
+            self.highlight = (self.highlight + 1) % (_CONTROLS_BACK_ROW + 1)
+        elif action is MenuAction.ENTER:
+            if self.highlight == _CONTROLS_BACK_ROW:
+                return True
+            self.waiting = True
+            self.message = ""
+        return False
+
+    def capture(self, key_name: str) -> None:
+        """Handle the key press that ends the wait, given its Pygame key name.
+
+        Does nothing unless the screen is waiting. Esc cancels the wait. A key
+        Pygame has no name for is ignored, and the wait goes on.
+        """
+        if not self.waiting:
+            return
+        if key_name.lower() == RESERVED_KEY:
+            self.waiting = False
+            return
+        if not key_name:
+            return
+
+        action = _CONTROL_ACTIONS[self.highlight]
+        self.waiting = False
+        candidate = dict(self.settings.bindings)
+        candidate[action] = key_name
+        if find_binding_conflicts(candidate):
+            holder = next(
+                (
+                    other
+                    for other in _CONTROL_ACTIONS
+                    if other != action and candidate[other].lower() == key_name.lower()
+                ),
+                None,
+            )
+            key_text = key_name.upper()
+            if holder is None:
+                self.message = f"{key_text} cannot be used"
+            else:
+                self.message = (
+                    f"{key_text} is already used by {CONTROL_ACTION_LABELS[holder]}"
+                )
+            return
+
+        self.settings.bindings = candidate
+        self.message = ""
+        # save_settings returns False when the file cannot be written. The new
+        # binding is already in self.settings, so it still applies for this session.
+        save_settings(self.path, self.settings)
 
 
 class MainMenu:
@@ -282,6 +393,7 @@ class MainMenu:
     ``settings`` is the object the rest of the program reads, so a change made
     here applies at once. A mode or difficulty change is written to ``path``
     straight away. If the write fails the value still applies for this session.
+    The Controls screen is opened from here and handles its own key bindings.
     """
 
     def __init__(self, settings: Settings, path: Path) -> None:
@@ -289,6 +401,7 @@ class MainMenu:
         self.path = path
         self.page = MenuPage.MAIN
         self.highlight = 0
+        self.controls = ControlsScreen(settings, path)
 
     @property
     def selected(self) -> MenuItem:
@@ -298,10 +411,25 @@ class MainMenu:
     @property
     def highlighted_line(self) -> int:
         """Return the index in ``lines`` of the highlighted line."""
-        return self.highlight if self.page is MenuPage.MAIN else 0
+        if self.page is MenuPage.MAIN:
+            return self.highlight
+        if self.page is MenuPage.CONTROLS:
+            return self.controls.highlight
+        return 0
+
+    @property
+    def capturing(self) -> bool:
+        """Return True while the Controls screen waits for a key to bind."""
+        return self.page is MenuPage.CONTROLS and self.controls.waiting
+
+    def capture(self, key_name: str) -> None:
+        """Pass the Pygame name of the key that ends a binding wait to the Controls screen."""
+        self.controls.capture(key_name)
 
     def lines(self) -> list[str]:
         """Return the text of each line of the current screen, top to bottom."""
+        if self.page is MenuPage.CONTROLS:
+            return self.controls.lines()
         if self.page is not MenuPage.MAIN:
             return [
                 _PLACEHOLDER_TITLES[self.page],
@@ -322,6 +450,10 @@ class MainMenu:
 
     def handle(self, action: MenuAction) -> MenuOutcome:
         """Apply one navigation action and return what the program should do next."""
+        if self.page is MenuPage.CONTROLS:
+            if self.controls.handle(action):
+                self.page = MenuPage.MAIN
+            return MenuOutcome.NONE
         if self.page is not MenuPage.MAIN:
             if action in (MenuAction.ENTER, MenuAction.BACK):
                 self.page = MenuPage.MAIN
@@ -349,6 +481,10 @@ class MainMenu:
                 list(Difficulty), self.settings.difficulty
             )
             self._save()
+        elif item is MenuItem.CONTROLS:
+            # A fresh screen each time, so it opens with no wait and no message.
+            self.controls = ControlsScreen(self.settings, self.path)
+            self.page = MenuPage.CONTROLS
         else:
             self.page = _ITEM_PAGES[item]
         return MenuOutcome.NONE
@@ -368,7 +504,14 @@ _MENU_KEYS: dict[int, MenuAction] = {
 
 
 def _handle_menu_key(key: int, menu: MainMenu) -> MenuOutcome:
-    """Pass a KEYDOWN key code to the menu. Keys that are not menu keys do nothing."""
+    """Pass a KEYDOWN key code to the menu. Keys that are not menu keys do nothing.
+
+    While the Controls screen waits for a key, every key press is the new binding
+    (or Esc to cancel), so the key's Pygame name goes to the menu instead.
+    """
+    if menu.capturing:
+        menu.capture(pygame.key.name(key))
+        return MenuOutcome.NONE
     action = _MENU_KEYS.get(key)
     if action is None:
         return MenuOutcome.NONE
