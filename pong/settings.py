@@ -1,6 +1,6 @@
 """User settings and the config file location.
 
-This module must not import pygame. It never reads the real environment or
+This module has no pygame dependency. It never reads the real environment or
 home directory itself; callers pass them in, so the logic can be tested.
 """
 

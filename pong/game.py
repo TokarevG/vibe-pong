@@ -1,6 +1,6 @@
 """Game rules that do not depend on pygame.
 
-This module must not import pygame, so the rules can be tested without
+This module has no pygame dependency, so the rules can be tested without
 opening a window.
 """
 

@@ -1,6 +1,6 @@
 """Core game objects and their movement rules.
 
-This module must not import pygame, so the rules can be tested without a window.
+This module has no pygame dependency, so the rules can be tested without a window.
 Coordinates are logical pixels with the y axis pointing down: a larger ``y`` is
 lower on screen.
 """

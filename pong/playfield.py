@@ -1,6 +1,6 @@
 """Scale and centre the fixed 1000 x 600 playfield inside a resizable window.
 
-This module is pure geometry and must not import pygame, so it can be tested
+This module is pure geometry and has no pygame dependency, so it can be tested
 without opening a window.
 """
 

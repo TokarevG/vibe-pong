@@ -1,6 +1,6 @@
 """AI opponent tuning for the single-player game.
 
-This module must not import pygame, so the tuning can be tested without a window.
+This module has no pygame dependency, so the tuning can be tested without a window.
 The values here are starting points and may change during playtesting.
 """
 
