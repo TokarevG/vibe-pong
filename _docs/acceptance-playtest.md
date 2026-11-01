@@ -7,9 +7,10 @@ Criteria: `_outdated/plan.md` §13, items 1 to 15.
 
 This note was written by an agent with no keyboard, so it cannot play the game.
 
-- **PASS (2):** items 13 and 14. These are command checks and were run here.
-- **NOT YET PLAYED (13):** items 1 to 12 and 15. A person must play the game and mark each one PASS or FAIL. Each entry below says what to check. Where a headless test exists, it is listed as headless evidence only. It does not replace the play check.
-- **FAIL (0):** no failures are recorded, so no issues were created.
+- **PASS (9):** items 1, 3, 4, 5, 6, 8 and 9 were played by the project owner and passed. Items 13 and 14 are command checks run by an agent.
+- **FAIL (1):** item 2. Resizing the window does not work. When the owner tries to resize it, the window redraws and shifts slightly down. Tracked in a new issue (see the item 2 entry).
+- **UNCONFIRMED (1):** item 7. The owner thinks the ball may not reach the maximum speed. Needs a longer rally check to confirm.
+- **NOT YET PLAYED (4):** items 10, 11, 12 and 15. A person must play these and mark each one PASS or FAIL.
 
 Setup before playing: `pip install -e ".[dev]"`, then run `python -m pong` from the repo root. Back up `~/.config/pong/config.json` (or `$XDG_CONFIG_HOME/pong/config.json`) before item 12, because that check changes it.
 
