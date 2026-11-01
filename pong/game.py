@@ -4,12 +4,24 @@ This module must not import pygame, so the rules can be tested without
 opening a window.
 """
 
-from enum import Enum
+import math
+from enum import Enum, auto
 
-from pong.ai import Difficulty
-from pong.physics import SERVE_SPEED, Ball, Paddle
+from pong.ai import AI_SETTINGS, Difficulty
+from pong.physics import (
+    SERVE_SPEED,
+    Ball,
+    Paddle,
+    ball_hits_paddle,
+    bounce_velocity,
+    next_speed,
+)
+from pong.playfield import PLAYFIELD_HEIGHT, PLAYFIELD_WIDTH
 
 WINNING_SCORE = 11
+
+DEFAULT_PADDLE_SPEED = 420.0
+"""Paddle speed in px/s for P1, and for P2 in two-player."""
 
 
 class Player(Enum):
@@ -74,6 +86,15 @@ class Mode(Enum):
     TWO_PLAYER = 2
 
 
+class GameEvent(Enum):
+    """Something that happened during one ``Match.update`` call."""
+
+    PADDLE_HIT = auto()
+    WALL_BOUNCE = auto()
+    SCORE = auto()
+    VICTORY = auto()
+
+
 def _other(player: Player) -> Player:
     """Return the player on the opposite side."""
     return Player.P2 if player is Player.P1 else Player.P1
@@ -86,14 +107,22 @@ class Match:
     toward the player who conceded the last point (P1 for the first serve).
     ``end_rally`` records a point and returns to serving.
 
-    ``difficulty`` is stored as given and not read here.
+    ``difficulty`` is stored as given. In single-player it is read once, when the
+    match is built, to set P2's speed from ``AI_SETTINGS``. In two-player it is not read.
+
+    ``update`` advances the match by one time step and reports what happened.
     """
 
     def __init__(self, mode: Mode, difficulty: Difficulty) -> None:
         self.mode = mode
         self.difficulty = difficulty
-        self.p1 = Paddle(x=30, y=250)
-        self.p2 = Paddle(x=958, y=250)
+        p2_speed = (
+            AI_SETTINGS[difficulty].max_speed
+            if mode is Mode.SINGLE_PLAYER
+            else DEFAULT_PADDLE_SPEED
+        )
+        self.p1 = Paddle(x=30, y=250, speed=DEFAULT_PADDLE_SPEED)
+        self.p2 = Paddle(x=958, y=250, speed=p2_speed)
         self.score = Score()
         self.ball = Ball(BALL_CENTRE_X, BALL_CENTRE_Y, 0.0, 0.0)
         self._serving = True
@@ -128,3 +157,77 @@ class Match:
         self.ball.vy = 0.0
         self._serving = True
         self._serve_toward = _other(scorer)
+
+    def update(
+        self, dt: float, p1_direction: int, p2_direction: int
+    ) -> list[GameEvent]:
+        """Advance the match by ``dt`` seconds and return the events that happened.
+
+        Both paddles move first, through ``Paddle.move``. While serving, the ball
+        stays still and nothing else happens. While rallying, the ball is stepped,
+        then checked for a wall bounce, a paddle hit, and a point. Returns an empty
+        list when nothing happened, and once a player has won it changes nothing
+        and returns an empty list.
+
+        ``dt`` should be at most 0.02 s, which the game loop enforces.
+
+        Raises:
+            ValueError: if a direction is not -1, 0 or 1, or ``dt`` is negative.
+        """
+        if self.score.winner() is not None:
+            return []
+
+        self.p1.move(p1_direction, dt, PLAYFIELD_HEIGHT)
+        self.p2.move(p2_direction, dt, PLAYFIELD_HEIGHT)
+
+        if self._serving:
+            return []
+
+        events: list[GameEvent] = []
+        if self.ball.step(dt, PLAYFIELD_HEIGHT):
+            events.append(GameEvent.WALL_BOUNCE)
+
+        if self.ball.vx < 0:
+            hit = self._bounce_off(self.p1, direction=1)
+        elif self.ball.vx > 0:
+            hit = self._bounce_off(self.p2, direction=-1)
+        else:
+            hit = False
+        if hit:
+            events.append(GameEvent.PADDLE_HIT)
+
+        player = scorer(self.ball.x, PLAYFIELD_WIDTH)
+        if player is not None:
+            self.end_rally(player)
+            events.append(GameEvent.SCORE)
+            if self.score.winner() is not None:
+                events.append(GameEvent.VICTORY)
+
+        return events
+
+    def _bounce_off(self, paddle: Paddle, direction: int) -> bool:
+        """Return the ball off ``paddle`` if it touches it, and return ``True`` if it did.
+
+        ``direction`` is the horizontal direction the ball leaves in: +1 for P1's
+        paddle, -1 for P2's. The new speed is ``next_speed`` of the current speed.
+        The ball keeps its position.
+        """
+        if not ball_hits_paddle(
+            self.ball.x,
+            self.ball.y,
+            self.ball.radius,
+            paddle.x,
+            paddle.y,
+            paddle.width,
+            paddle.height,
+            self.ball.vx,
+        ):
+            return False
+
+        half_height = paddle.height / 2
+        offset = (self.ball.y - (paddle.y + half_height)) / half_height
+        speed = next_speed(math.hypot(self.ball.vx, self.ball.vy))
+        self.ball.vx, self.ball.vy = bounce_velocity(
+            offset, speed, direction, paddle.velocity
+        )
+        return True
