@@ -35,6 +35,7 @@ pong/
 ├── physics.py      # Ball movement, collisions, bounce angles, speed (no Pygame)
 ├── ai.py           # Computer paddle, parameterised by difficulty (no Pygame)
 ├── settings.py     # Load, validate, and save the JSON settings file (no Pygame)
+├── playfield.py    # Scale and centre the 1000 x 600 playfield in the window (no Pygame)
 └── tests/
     ├── test_physics.py
     ├── test_scoring.py
