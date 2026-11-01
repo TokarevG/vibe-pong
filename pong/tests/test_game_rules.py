@@ -649,3 +649,84 @@ def test_ball_is_never_left_behind_p2_on_the_near_side():
                     assert match.ball.x <= 958 - 8 + 1e-9, (x0, vx0, y0)
                     assert match.ball.vx < 0, (x0, vx0, y0)
     assert hits > 0
+
+
+def match_state(match: Match) -> tuple:
+    """Everything a paused match must keep unchanged, as one comparable value."""
+    return (
+        (match.ball.x, match.ball.y, match.ball.vx, match.ball.vy),
+        (match.p1.x, match.p1.y, match.p1.velocity),
+        (match.p2.x, match.p2.y, match.p2.velocity),
+        (match.score.points(Player.P1), match.score.points(Player.P2)),
+        match.serving,
+        match.score.winner(),
+    )
+
+
+def test_paused_starts_false():
+    assert new_match().paused is False
+
+
+def test_toggle_pause_flips_paused_each_call():
+    match = new_match()
+    match.toggle_pause()
+    assert match.paused is True
+    match.toggle_pause()
+    assert match.paused is False
+
+
+def test_paused_update_returns_empty_and_changes_nothing_over_600_steps():
+    match = rally_match()
+    match.update(DT, 0, 0)
+    match.toggle_pause()
+    before = match_state(match)
+    for _ in range(600):
+        assert match.update(1 / 60, -1, 1) == []
+    assert match_state(match) == before
+
+
+def test_paused_update_changes_nothing_while_serving():
+    match = new_match()
+    match.toggle_pause()
+    before = match_state(match)
+    for _ in range(600):
+        assert match.update(1 / 60, 1, -1) == []
+    assert match_state(match) == before
+
+
+def test_paused_start_rally_does_nothing():
+    match = new_match()
+    match.toggle_pause()
+    match.start_rally()
+    assert match.serving is True
+    assert (match.ball.vx, match.ball.vy) == (0, 0)
+
+
+def test_resume_lets_update_move_paddles_and_ball_again():
+    match = rally_match()
+    match.toggle_pause()
+    match.toggle_pause()
+    p1_before = match.p1.y
+    x_before = match.ball.x
+    match.update(DT, 1, 0)
+    assert match.p1.y == p1_before + 420 * DT
+    assert match.ball.x != x_before
+
+
+def test_resume_lets_start_rally_serve_again_when_serving():
+    match = new_match()
+    match.toggle_pause()
+    match.toggle_pause()
+    match.start_rally()
+    assert match.serving is False
+    assert (match.ball.vx, match.ball.vy) == (-SERVE_SPEED, 0.0)
+
+
+def test_toggle_pause_does_nothing_once_there_is_a_winner():
+    match = rally_match()
+    for _ in range(11):
+        match.score.award(Player.P2)
+    match.toggle_pause()
+    assert match.paused is False
+    match.toggle_pause()
+    assert match.paused is False

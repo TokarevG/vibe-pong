@@ -156,6 +156,9 @@ class Match:
     match is built, to set P2's speed from ``AI_SETTINGS``. In two-player it is not read.
 
     ``update`` advances the match by one time step and reports what happened.
+
+    ``paused`` starts ``False``. While it is ``True``, ``update`` and ``start_rally``
+    do nothing. ``toggle_pause`` flips it, and does nothing once there is a winner.
     """
 
     def __init__(self, mode: Mode, difficulty: Difficulty) -> None:
@@ -172,18 +175,29 @@ class Match:
         self.ball = Ball(BALL_CENTRE_X, BALL_CENTRE_Y, 0.0, 0.0)
         self._serving = True
         self._serve_toward = Player.P1
+        self.paused = False
 
     @property
     def serving(self) -> bool:
         """Return ``True`` while the ball waits at the centre for a serve."""
         return self._serving
 
+    def toggle_pause(self) -> None:
+        """Pause a running match, or resume a paused one.
+
+        Does nothing once someone has won, so the match cannot be paused after it ends.
+        """
+        if self.score.winner() is not None:
+            return
+        self.paused = not self.paused
+
     def start_rally(self) -> None:
         """Serve the ball toward ``_serve_toward`` at ``SERVE_SPEED`` with no vertical speed.
 
-        Does nothing if the match is not serving, or if someone has already won.
+        Does nothing if the match is not serving, if it is paused, or if someone has
+        already won.
         """
-        if not self._serving or self.score.winner() is not None:
+        if not self._serving or self.paused or self.score.winner() is not None:
             return
         direction = -1 if self._serve_toward is Player.P1 else 1
         self.ball.vx = direction * SERVE_SPEED
@@ -212,14 +226,15 @@ class Match:
         stays still and nothing else happens. While rallying, the ball is stepped,
         then checked for a wall bounce, a paddle hit along the step's path, and a
         point. Returns an empty list when nothing happened, and once a player has
-        won it changes nothing and returns an empty list.
+        won it changes nothing and returns an empty list. While paused it also
+        changes nothing and returns an empty list.
 
         ``dt`` should be at most 0.02 s, which the game loop enforces.
 
         Raises:
             ValueError: if a direction is not -1, 0 or 1, or ``dt`` is negative.
         """
-        if self.score.winner() is not None:
+        if self.paused or self.score.winner() is not None:
             return []
 
         self.p1.move(p1_direction, dt, PLAYFIELD_HEIGHT)
