@@ -28,8 +28,14 @@ def next_speed(speed: float) -> float:
 
     The result is ``speed * SPEED_GAIN``, or ``MAX_SPEED`` if that is larger.
     The result is never above ``MAX_SPEED``, so a speed already at or above the
-    cap stays at ``MAX_SPEED``.
+    cap stays at ``MAX_SPEED``. ``inf`` gives ``MAX_SPEED``.
+
+    Raises:
+        ValueError: if ``speed`` is ``nan``. ``nan`` has no ordering, so no cap
+            can be applied to it.
     """
+    if math.isnan(speed):
+        raise ValueError("speed must be a number, got nan")
     return min(speed * SPEED_GAIN, MAX_SPEED)
 
 

@@ -638,3 +638,13 @@ def test_next_speed_below_cap_is_gain_times_speed(speed):
 def test_next_speed_clamps_speed_above_cap():
     assert next_speed(5000.0) == MAX_SPEED
     assert next_speed(math.inf) == MAX_SPEED
+
+
+def test_next_speed_nan_raises():
+    with pytest.raises(ValueError):
+        next_speed(math.nan)
+
+
+@pytest.mark.parametrize("speed", [-math.inf, 1e308, -1e308])
+def test_next_speed_extreme_finite_or_infinite_is_never_above_max(speed):
+    assert next_speed(speed) <= MAX_SPEED
