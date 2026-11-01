@@ -1036,8 +1036,11 @@ def main() -> int:
                         pause = PauseMenu()
                 else:
                     _handle_key_down(event.key, settings, match)
-            elif event.type == pygame.VIDEORESIZE and event.w > 0 and event.h > 0:
-                screen = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE)
+            # VIDEORESIZE is not handled. Calling set_mode on each resize event
+            # re-set the window size while the user was still dragging it, which
+            # is the likely cause of the window shifting. pygame keeps the display
+            # surface at the window's size, and every draw call reads that size, so
+            # the playfield rescales without set_mode.
 
         if match is not None and ai is not None:
             # While paused, or once the match is won, the simulation and the AI are
