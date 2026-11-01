@@ -7,15 +7,22 @@ import functools
 import os
 import random
 import sys
+from enum import Enum, auto
 from pathlib import Path
 from typing import Protocol
 
 import pygame
 
-from pong.ai import AIController
+from pong.ai import AIController, Difficulty
 from pong.game import Match, Mode, Player
 from pong.playfield import PLAYFIELD_HEIGHT, PLAYFIELD_WIDTH, fit_playfield
-from pong.settings import Settings, config_path, default_settings, load_settings
+from pong.settings import (
+    Settings,
+    config_path,
+    default_settings,
+    load_settings,
+    save_settings,
+)
 
 FPS = 60
 # Longest step the simulation may take in one frame, so a slow frame cannot
@@ -202,17 +209,224 @@ def _handle_key_down(key: int, settings: Settings, match: Match) -> None:
         match.start_rally()
 
 
+# The main menu. The state and logic in this section use no pygame names: only
+# draw_menu and the key mapping below touch pygame.
+
+MENU_FONT_SIZE = 48
+"""Menu text size in logical units."""
+MENU_FIRST_ROW_Y = 60.0
+"""Vertical centre of the first menu line, in logical units."""
+MENU_ROW_SPACING = 56.0
+"""Distance between the centres of neighbouring menu lines, in logical units."""
+DIM_TEXT = (128, 128, 128)
+"""Colour of menu lines that are not highlighted."""
+
+
+class MenuItem(Enum):
+    """Rows of the main menu, top to bottom."""
+
+    START_GAME = auto()
+    MODE = auto()
+    DIFFICULTY = auto()
+    CONTROLS = auto()
+    AUDIO = auto()
+    QUIT = auto()
+
+
+MENU_ITEMS: tuple[MenuItem, ...] = tuple(MenuItem)
+
+
+class MenuAction(Enum):
+    """What a navigation key asks the menu to do."""
+
+    UP = auto()
+    DOWN = auto()
+    ENTER = auto()
+    BACK = auto()
+
+
+class MenuOutcome(Enum):
+    """What the menu asks the program to do after an action."""
+
+    NONE = auto()
+    START_GAME = auto()
+    QUIT = auto()
+
+
+class MenuPage(Enum):
+    """Which menu screen is showing. CONTROLS and AUDIO are placeholders for now."""
+
+    MAIN = auto()
+    CONTROLS = auto()
+    AUDIO = auto()
+
+
+_MODE_LABELS = {Mode.SINGLE_PLAYER: "Single-player", Mode.TWO_PLAYER: "Two-player"}
+_DIFFICULTY_LABELS = {
+    Difficulty.EASY: "Easy",
+    Difficulty.MEDIUM: "Medium",
+    Difficulty.HARD: "Hard",
+}
+_PLACEHOLDER_TITLES = {MenuPage.CONTROLS: "Controls", MenuPage.AUDIO: "Audio"}
+_ITEM_PAGES = {MenuItem.CONTROLS: MenuPage.CONTROLS, MenuItem.AUDIO: MenuPage.AUDIO}
+
+
+def _next_value[T](values: list[T], current: T) -> T:
+    """Return the value after ``current`` in ``values``, wrapping to the first."""
+    return values[(values.index(current) + 1) % len(values)]
+
+
+class MainMenu:
+    """The main menu's state: the screen, the highlighted row and the settings.
+
+    ``settings`` is the object the rest of the program reads, so a change made
+    here applies at once. A mode or difficulty change is written to ``path``
+    straight away. If the write fails the value still applies for this session.
+    """
+
+    def __init__(self, settings: Settings, path: Path) -> None:
+        self.settings = settings
+        self.path = path
+        self.page = MenuPage.MAIN
+        self.highlight = 0
+
+    @property
+    def selected(self) -> MenuItem:
+        """Return the highlighted row of the main menu."""
+        return MENU_ITEMS[self.highlight]
+
+    @property
+    def highlighted_line(self) -> int:
+        """Return the index in ``lines`` of the highlighted line."""
+        return self.highlight if self.page is MenuPage.MAIN else 0
+
+    def lines(self) -> list[str]:
+        """Return the text of each line of the current screen, top to bottom."""
+        if self.page is not MenuPage.MAIN:
+            return [
+                _PLACEHOLDER_TITLES[self.page],
+                "Not yet available",
+                "Press Esc or Enter to go back",
+            ]
+        labels = {
+            MenuItem.START_GAME: "Start Game",
+            MenuItem.MODE: f"Mode: {_MODE_LABELS[self.settings.mode]}",
+            MenuItem.DIFFICULTY: (
+                f"Difficulty: {_DIFFICULTY_LABELS[self.settings.difficulty]}"
+            ),
+            MenuItem.CONTROLS: "Controls",
+            MenuItem.AUDIO: "Audio",
+            MenuItem.QUIT: "Quit",
+        }
+        return [labels[item] for item in MENU_ITEMS]
+
+    def handle(self, action: MenuAction) -> MenuOutcome:
+        """Apply one navigation action and return what the program should do next."""
+        if self.page is not MenuPage.MAIN:
+            if action in (MenuAction.ENTER, MenuAction.BACK):
+                self.page = MenuPage.MAIN
+            return MenuOutcome.NONE
+        if action is MenuAction.UP:
+            self.highlight = (self.highlight - 1) % len(MENU_ITEMS)
+            return MenuOutcome.NONE
+        if action is MenuAction.DOWN:
+            self.highlight = (self.highlight + 1) % len(MENU_ITEMS)
+            return MenuOutcome.NONE
+        if action is not MenuAction.ENTER:
+            # Esc does nothing on the main menu.
+            return MenuOutcome.NONE
+
+        item = self.selected
+        if item is MenuItem.START_GAME:
+            return MenuOutcome.START_GAME
+        if item is MenuItem.QUIT:
+            return MenuOutcome.QUIT
+        if item is MenuItem.MODE:
+            self.settings.mode = _next_value(list(Mode), self.settings.mode)
+            self._save()
+        elif item is MenuItem.DIFFICULTY:
+            self.settings.difficulty = _next_value(
+                list(Difficulty), self.settings.difficulty
+            )
+            self._save()
+        else:
+            self.page = _ITEM_PAGES[item]
+        return MenuOutcome.NONE
+
+    def _save(self) -> None:
+        # save_settings returns False when the file cannot be written. The value
+        # is already in self.settings, so it still applies for this session.
+        save_settings(self.path, self.settings)
+
+
+_MENU_KEYS: dict[int, MenuAction] = {
+    pygame.K_UP: MenuAction.UP,
+    pygame.K_DOWN: MenuAction.DOWN,
+    pygame.K_RETURN: MenuAction.ENTER,
+    pygame.K_ESCAPE: MenuAction.BACK,
+}
+
+
+def _handle_menu_key(key: int, menu: MainMenu) -> MenuOutcome:
+    """Pass a KEYDOWN key code to the menu. Keys that are not menu keys do nothing."""
+    action = _MENU_KEYS.get(key)
+    if action is None:
+        return MenuOutcome.NONE
+    return menu.handle(action)
+
+
+def _start_match(settings: Settings) -> tuple[Match, AIController]:
+    """Return a new match in the serving state, with the AI for its difficulty."""
+    match = Match(settings.mode, settings.difficulty)
+    return match, AIController(settings.difficulty, random.Random())
+
+
+@functools.lru_cache(maxsize=4)
+def _menu_font(size: int) -> pygame.font.Font:
+    """Return the default font at ``size`` pixels, cached by size."""
+    return pygame.font.Font(None, size)
+
+
+def draw_menu(surface: pygame.Surface, menu: MainMenu) -> None:
+    """Draw the current menu screen onto ``surface``.
+
+    The surface is filled with black, and the lines are centred in the 5:3
+    playfield area as ``draw_frame`` maps it. The highlighted line is white and
+    the others are dim. Nothing is drawn when the width or height is 0. Only
+    reads ``menu``.
+    """
+    width, height = surface.get_size()
+    if width <= 0 or height <= 0:
+        return
+
+    scale, offset_x, offset_y = fit_playfield(width, height)
+    surface.fill(BLACK)
+    font = _menu_font(max(1, round(MENU_FONT_SIZE * scale)))
+    centre_x = round(offset_x + PLAYFIELD_WIDTH / 2 * scale)
+    highlighted = menu.highlighted_line
+    for index, text in enumerate(menu.lines()):
+        colour = WHITE if index == highlighted else DIM_TEXT
+        rendered = font.render(text, True, colour)
+        centre_y = round(
+            offset_y + (MENU_FIRST_ROW_Y + index * MENU_ROW_SPACING) * scale
+        )
+        surface.blit(rendered, rendered.get_rect(center=(centre_x, centre_y)))
+
+
 def main() -> int:
     pygame.init()
     # Loaded once. Bindings are read from this object each frame, not the file.
-    settings = load_settings(config_path(os.environ, Path.home()))
+    path = config_path(os.environ, Path.home())
+    settings = load_settings(path)
+    menu = MainMenu(settings, path)
     screen = pygame.display.set_mode(
         (PLAYFIELD_WIDTH, PLAYFIELD_HEIGHT), pygame.RESIZABLE
     )
     pygame.display.set_caption("Pong")
     clock = pygame.time.Clock()
-    match = Match(settings.mode, settings.difficulty)
-    ai = AIController(settings.difficulty, random.Random())
+    # Both are None while the menu is showing. Start Game sets them.
+    match: Match | None = None
+    ai: AIController | None = None
 
     running = True
     while running:
@@ -224,16 +438,25 @@ def main() -> int:
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.KEYDOWN:
-                _handle_key_down(event.key, settings, match)
+                if match is not None and ai is not None:
+                    _handle_key_down(event.key, settings, match)
+                else:
+                    outcome = _handle_menu_key(event.key, menu)
+                    if outcome is MenuOutcome.START_GAME:
+                        match, ai = _start_match(menu.settings)
+                    elif outcome is MenuOutcome.QUIT:
+                        running = False
             elif event.type == pygame.VIDEORESIZE and event.w > 0 and event.h > 0:
                 screen = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE)
 
-        p1_direction, p2_direction = _read_directions(
-            pygame.key.get_pressed(), settings, match, ai, dt
-        )
-        match.update(dt, p1_direction, p2_direction)
-
-        draw_frame(screen, match)
+        if match is not None and ai is not None:
+            p1_direction, p2_direction = _read_directions(
+                pygame.key.get_pressed(), settings, match, ai, dt
+            )
+            match.update(dt, p1_direction, p2_direction)
+            draw_frame(screen, match)
+        else:
+            draw_menu(screen, menu)
         pygame.display.flip()
 
     pygame.quit()

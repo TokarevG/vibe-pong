@@ -150,9 +150,12 @@ def test_main_loop_routes_keydown_events_to_the_serve(
     def fake_events() -> list[pygame.event.Event]:
         nonlocal frames
         frames += 1
+        # Frame 1: Enter on Start Game, since the game opens on the main menu.
         if frames == 1:
-            return [pygame.event.Event(pygame.KEYDOWN, key=pygame.K_w)]
+            return [pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN)]
         if frames == 2:
+            return [pygame.event.Event(pygame.KEYDOWN, key=pygame.K_w)]
+        if frames == 3:
             return [pygame.event.Event(pygame.KEYDOWN, key=pygame.K_SPACE)]
         return [pygame.event.Event(pygame.QUIT)]
 

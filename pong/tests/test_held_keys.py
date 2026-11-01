@@ -197,6 +197,9 @@ def test_main_reads_key_state_once_per_frame_and_loads_settings_once(
     def fake_events() -> list[pygame.event.Event]:
         nonlocal events_calls
         events_calls += 1
+        if events_calls == 1:
+            # The game opens on the main menu. Enter on Start Game begins a match.
+            return [pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN)]
         if events_calls == frames:
             return [pygame.event.Event(pygame.QUIT)]
         return []
