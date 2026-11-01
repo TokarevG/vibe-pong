@@ -266,3 +266,47 @@ def test_ball_playfield_not_taller_than_diameter_raises():
     ball = Ball(500, 8, 0, 0)
     with pytest.raises(ValueError):
         ball.step(0.1, 2 * BALL_RADIUS)
+
+
+INFINITY = float("inf")
+
+
+@pytest.mark.parametrize("dt", [INFINITY, 1e9, 1e300])
+def test_ball_huge_dt_returns_centre_inside_range(dt):
+    ball = Ball(500, 300, 0, 1)
+    bounced = ball.step(dt, FIELD_HEIGHT)
+    assert BALL_RADIUS <= ball.y <= FIELD_HEIGHT - BALL_RADIUS
+    assert ball.vx == 0
+    assert bounced is True
+
+
+def test_ball_infinite_dt_with_nonzero_vy_returns_quickly():
+    # The old per-bounce loop never ended for an infinite step.
+    ball = Ball(500, 300, 0, -1000)
+    ball.step(INFINITY, FIELD_HEIGHT)
+    assert BALL_RADIUS <= ball.y <= FIELD_HEIGHT - BALL_RADIUS
+
+
+def test_ball_huge_travel_from_overflow_returns_centre_inside_range():
+    # vy * dt overflows to infinity even though dt is finite.
+    ball = Ball(500, 300, 0, 1e308)
+    bounced = ball.step(10.0, FIELD_HEIGHT)
+    assert BALL_RADIUS <= ball.y <= FIELD_HEIGHT - BALL_RADIUS
+    assert bounced is True
+
+
+def test_ball_infinite_dt_with_zero_vy_does_not_move():
+    ball = Ball(500, 300, 0, 0)
+    bounced = ball.step(INFINITY, FIELD_HEIGHT)
+    assert ball.y == 300
+    assert ball.vy == 0
+    assert bounced is False
+
+
+def test_ball_nan_dt_raises_and_leaves_ball_unchanged():
+    ball = Ball(500, 300, 300, 200)
+    with pytest.raises(ValueError):
+        ball.step(float("nan"), FIELD_HEIGHT)
+    assert ball.x == 500
+    assert ball.y == 300
+    assert ball.vy == 200

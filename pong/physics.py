@@ -5,6 +5,16 @@ Coordinates are logical pixels with the y axis pointing down: a larger ``y`` is
 lower on screen.
 """
 
+import math
+
+
+def _travel(velocity: float, dt: float) -> float:
+    """Distance covered at ``velocity`` for ``dt``, with no travel at zero velocity.
+
+    The zero check keeps ``0 * inf`` from producing ``nan``.
+    """
+    return 0.0 if velocity == 0 else velocity * dt
+
 
 class Paddle:
     """A vertical paddle whose ``y`` is kept inside the playfield.
@@ -83,31 +93,54 @@ class Ball:
         never changed by a bounce. Returns ``True`` if at least one wall bounce
         happened during this step, otherwise ``False``.
 
+        The reflections are computed in constant time, so a very large ``dt`` is
+        cheap. An infinite travel (``dt`` infinite with nonzero velocity, or an
+        overflow) has no finite resting point, so the centre is put on the wall it
+        was heading for.
+
         Raises:
-            ValueError: if ``dt`` is negative, or the playfield is not taller than
-                the ball's diameter (``playfield_height <= 2 * radius``).
+            ValueError: if ``dt`` is negative or ``nan``, or the playfield is not a
+                finite height greater than the ball's diameter
+                (``playfield_height > 2 * radius``).
         """
+        if math.isnan(dt):
+            raise ValueError("dt must be a number, got nan")
         if dt < 0:
             raise ValueError(f"dt must not be negative, got {dt}")
-        if playfield_height <= 2 * self.radius:
+        if not math.isfinite(playfield_height) or playfield_height <= 2 * self.radius:
             raise ValueError(
-                f"playfield height must be greater than 2 * radius, "
+                f"playfield height must be finite and greater than 2 * radius, "
                 f"got {playfield_height} for radius {self.radius}"
             )
 
-        self.x += self.vx * dt
-        y_raw = self.y + self.vy * dt
+        self.x += _travel(self.vx, dt)
 
         top = self.radius
         bottom = playfield_height - self.radius
-        bounced = False
-        while y_raw < top or y_raw > bottom:
-            bounced = True
-            if y_raw < top:
-                y_raw = 2 * top - y_raw
-            else:
-                y_raw = 2 * bottom - y_raw
-            self.vy = -self.vy
+        span = bottom - top
+        travel = _travel(self.vy, dt)
+        y_raw = self.y + travel
 
-        self.y = y_raw
-        return bounced
+        # Position relative to the top wall, before any reflection.
+        offset = y_raw - top
+        ratio = offset / span if math.isfinite(y_raw) else math.inf
+        if not math.isfinite(ratio):
+            self.y = bottom if travel > 0 else top
+            return True
+
+        # Each reflection is a fold back into [top, bottom]. Folding the unbounded
+        # line with period 2 * span gives the same point as reflecting one wall
+        # at a time, and the number of folds sets the sign of vy.
+        if offset >= 0:
+            bounces = max(0, math.ceil(ratio) - 1)
+        else:
+            bounces = math.ceil(-ratio)
+
+        phase = offset % (2 * span)
+        if phase > span:
+            phase = 2 * span - phase
+        self.y = min(max(top + phase, top), bottom)
+
+        if bounces % 2 == 1:
+            self.vy = -self.vy
+        return bounces > 0
