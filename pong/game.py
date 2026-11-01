@@ -6,6 +6,8 @@ opening a window.
 
 from enum import Enum
 
+from pong.physics import SERVE_SPEED, Ball, Paddle
+
 WINNING_SCORE = 11
 
 
@@ -55,3 +57,74 @@ def scorer(ball_x: float, playfield_width: float) -> Player | None:
     if ball_x > playfield_width:
         return Player.P1
     return None
+
+
+BALL_CENTRE_X = 500.0
+"""Horizontal centre of the playfield, where the ball waits between rallies."""
+
+BALL_CENTRE_Y = 300.0
+"""Vertical centre of the playfield, where the ball waits between rallies."""
+
+
+class Mode(Enum):
+    """How many players control the paddles."""
+
+    SINGLE_PLAYER = 1
+    TWO_PLAYER = 2
+
+
+def _other(player: Player) -> Player:
+    """Return the player on the opposite side."""
+    return Player.P2 if player is Player.P1 else Player.P1
+
+
+class Match:
+    """One match: two paddles, the score, the ball and the serving state.
+
+    The ball waits still at the centre while serving. ``start_rally`` sends it out
+    toward the player who conceded the last point (P1 for the first serve).
+    ``end_rally`` records a point and returns to serving.
+
+    ``difficulty`` is stored as given and not read here. Its type should become
+    ``Difficulty`` from ``pong/ai.py`` once that module exists (#16).
+    """
+
+    def __init__(self, mode: Mode, difficulty: object) -> None:
+        self.mode = mode
+        self.difficulty = difficulty
+        self.p1 = Paddle(x=30, y=250)
+        self.p2 = Paddle(x=958, y=250)
+        self.score = Score()
+        self.ball = Ball(BALL_CENTRE_X, BALL_CENTRE_Y, 0.0, 0.0)
+        self._serving = True
+        self._serve_toward = Player.P1
+
+    @property
+    def serving(self) -> bool:
+        """Return ``True`` while the ball waits at the centre for a serve."""
+        return self._serving
+
+    def start_rally(self) -> None:
+        """Serve the ball toward ``_serve_toward`` at ``SERVE_SPEED`` with no vertical speed.
+
+        Does nothing if the match is not serving, or if someone has already won.
+        """
+        if not self._serving or self.score.winner() is not None:
+            return
+        direction = -1 if self._serve_toward is Player.P1 else 1
+        self.ball.vx = direction * SERVE_SPEED
+        self.ball.vy = 0.0
+        self._serving = False
+
+    def end_rally(self, scorer: Player) -> None:
+        """Award a point to ``scorer``, centre the ball still and return to serving.
+
+        The next serve goes toward the other player, the one who conceded.
+        """
+        self.score.award(scorer)
+        self.ball.x = BALL_CENTRE_X
+        self.ball.y = BALL_CENTRE_Y
+        self.ball.vx = 0.0
+        self.ball.vy = 0.0
+        self._serving = True
+        self._serve_toward = _other(scorer)
