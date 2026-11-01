@@ -728,6 +728,41 @@ def test_hard_without_prediction_takes_no_draw_and_does_not_hold():
     assert not ctrl.uncertain
 
 
+@pytest.mark.parametrize(
+    "ball_x", [AI_PADDLE_X - BALL_RADIUS, AI_PADDLE_X - BALL_RADIUS + 5.0]
+)
+def test_hard_at_contact_after_an_offset_targets_the_ball_y_exactly(
+    monkeypatch, ball_x
+):
+    # (c): an earlier look left a nonzero aim error. At contact the offset must be
+    # dropped at once, not eased, so the target is the ball's y exactly.
+    use_settings(monkeypatch, Difficulty.HARD, reaction_delay=0.1, aim_error=10.0)
+    rng = FixedOffsetRandom(7.0)
+    ctrl = AIController(Difficulty.HARD, rng)
+    look(ctrl, 0.0, 300.0, 300.0, vx=300.0, vy=60.0)
+    assert ctrl.target != pytest.approx(390.0)  # the first look has an offset
+    look(ctrl, 0.1, 123.0, 300.0, ball_x=ball_x, vx=50.0, vy=200.0)
+    assert ctrl.target == 123.0
+    assert not ctrl.uncertain
+
+
+def test_hard_without_prediction_tracks_ball_y_exactly_over_many_looks(monkeypatch):
+    # (j): after a predicted look leaves an offset, each look with no prediction
+    # aims at the ball's y exactly, with no draw and no hold.
+    use_settings(monkeypatch, Difficulty.HARD, reaction_delay=0.1, aim_error=10.0)
+    rng = FixedOffsetRandom(7.0)
+    ctrl = AIController(Difficulty.HARD, rng)
+    look(ctrl, 0.0, 300.0, 300.0, vx=300.0, vy=60.0)
+    draws_after_first_look = len(rng.calls)
+    for step in range(30):
+        ball_y = 50.0 + 13.0 * step
+        direction = look(ctrl, 0.1, ball_y, 300.0, vx=-300.0, vy=60.0)
+        assert ctrl.target == ball_y
+        assert not ctrl.uncertain
+        assert direction in (-1, 0, 1)
+    assert len(rng.calls) == draws_after_first_look
+
+
 def test_hard_holds_still_while_passes_disagree(monkeypatch):
     # (d) Spread 4.5 px: hold still, even 100 px from the target, until the next look.
     use_settings(monkeypatch, Difficulty.HARD, reaction_delay=0.5, aim_error=10.0)

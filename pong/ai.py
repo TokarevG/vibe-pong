@@ -231,8 +231,11 @@ class AIController:
             playfield_height,
         )
         if predicted is None:
+            # No prediction: aim at the ball's y exactly. Drop the aim error now,
+            # rather than easing it to zero, so the target is the ball's y at once.
             self._base = ball_y
             self._goal_error = 0.0
+            self._error = 0.0
             self._uncertain = False
             return
 
