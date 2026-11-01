@@ -10,6 +10,7 @@ import pytest
 from pong.ai import (
     AI_SETTINGS,
     AIM_SMOOTHING_TIME,
+    CERTAINTY_TOLERANCE,
     DEAD_ZONE,
     AIController,
     AISettings,
@@ -49,9 +50,9 @@ def test_ai_settings_is_frozen():
         settings.max_speed = 1.0  # type: ignore[misc]
 
 
-def test_ai_settings_has_the_three_fields():
+def test_ai_settings_has_the_four_fields():
     names = {f.name for f in dataclasses.fields(AISettings)}
-    assert names == {"reaction_delay", "max_speed", "aim_error"}
+    assert names == {"reaction_delay", "max_speed", "aim_error", "passes"}
 
 
 def test_table_has_an_entry_for_every_difficulty():
@@ -59,18 +60,19 @@ def test_table_has_an_entry_for_every_difficulty():
 
 
 @pytest.mark.parametrize(
-    ("difficulty", "reaction_delay", "max_speed", "aim_error"),
+    ("difficulty", "reaction_delay", "max_speed", "aim_error", "passes"),
     [
-        (Difficulty.EASY, 0.40, 240, 60),
-        (Difficulty.MEDIUM, 0.25, 330, 30),
-        (Difficulty.HARD, 0.10, 420, 10),
+        (Difficulty.EASY, 0.40, 240, 60, 1),
+        (Difficulty.MEDIUM, 0.25, 330, 30, 1),
+        (Difficulty.HARD, 0.10, 420, 10, 4),
     ],
 )
-def test_table_values(difficulty, reaction_delay, max_speed, aim_error):
+def test_table_values(difficulty, reaction_delay, max_speed, aim_error, passes):
     assert AI_SETTINGS[difficulty] == AISettings(
         reaction_delay=reaction_delay,
         max_speed=max_speed,
         aim_error=aim_error,
+        passes=passes,
     )
 
 
@@ -232,26 +234,135 @@ def test_between_looks_the_direction_follows_the_paddle(monkeypatch):
     assert look(ctrl, 0.1, 100.0, 120.0) == -1  # paddle overshot
 
 
-def test_each_look_draws_offset_uniformly_over_aim_error(monkeypatch):
+def pass_bounds(ball_x=500.0, vx=300.0, vy=0.0):
+    """Return the error bound of each Hard pass on one look, as the stub rng recorded it.
+
+    The ball is at y 300. The prediction is not checked here, only the bounds.
+    """
+    rng = FixedOffsetRandom(0.0)
+    ctrl = AIController(Difficulty.HARD, rng)
+    look(ctrl, 0.0, 300.0, 300.0, ball_x=ball_x, vx=vx, vy=vy)
+    return [high for _, high in rng.calls]
+
+
+def test_each_look_draws_one_offset_per_pass_within_its_bound(monkeypatch):
     use_settings(monkeypatch, Difficulty.HARD, reaction_delay=0.5, aim_error=10.0)
     rng = FixedOffsetRandom(0.0)
     ctrl = AIController(Difficulty.HARD, rng)
-    look(ctrl, 0.0, 100.0, 100.0)  # look 1
-    look(ctrl, 0.5, 100.0, 100.0)  # look 2
-    assert rng.calls == [(-10.0, 10.0), (-10.0, 10.0)]
+    look(ctrl, 0.0, 300.0, 300.0, vx=300.0, vy=0.0)  # look 1
+    look(ctrl, 0.5, 300.0, 300.0, vx=300.0, vy=0.0)  # look 2
+    assert len(rng.calls) == 2 * AI_SETTINGS[Difficulty.HARD].passes
+    for low, high in rng.calls:
+        assert low == -high
+        assert high > 0
 
 
-def test_target_is_seen_ball_y_plus_offset(monkeypatch):
+def test_hard_takes_four_passes_per_look_in_pass_order():
+    # (a) Hard has four passes, each bound is the pass-1 bound divided by its number.
+    bounds = pass_bounds(vx=300.0, vy=0.0)
+    assert AI_SETTINGS[Difficulty.HARD].passes == 4
+    assert len(bounds) == 4
+    for p, bound in enumerate(bounds, start=1):
+        assert bound == pytest.approx(bounds[0] / p)
+
+
+@pytest.mark.parametrize("difficulty", [Difficulty.EASY, Difficulty.MEDIUM])
+def test_easy_and_medium_take_one_draw_per_look(monkeypatch, difficulty):
+    # (a) Easy and Medium do not use the multi-pass prediction.
+    rng = FixedOffsetRandom(0.0)
+    ctrl = AIController(difficulty, rng)
+    look(ctrl, 0.0, 300.0, 300.0, vx=300.0, vy=60.0)
+    assert rng.calls == [
+        (-AI_SETTINGS[difficulty].aim_error, AI_SETTINGS[difficulty].aim_error)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("vx", "vy", "expected"),
+    [
+        pytest.param(300.0, 0.0, 2.5, id="horizontal"),  # theta 0: a = 0.25
+        pytest.param(300.0, 300.0, 6.25, id="45-degrees"),  # theta 45: a = 0.625
+        pytest.param(1e-3, 1000.0, 10.0, id="vertical"),  # theta ~90: a = 1
+    ],
+)
+def test_angle_sets_the_pass_one_bound(vx, vy, expected):
+    # (b) At d >= 300 px on Hard with aim_error 10, the bound follows the angle.
+    bounds = pass_bounds(ball_x=500.0, vx=vx, vy=vy)  # d = 450
+    assert bounds[0] == pytest.approx(expected, abs=0.01)
+
+
+def test_steeper_trajectory_has_a_larger_bound_at_the_same_distance():
+    # (b) At d = 300 px, theta 0 < theta 45 < theta 90.
+    ball_x = AI_PADDLE_X - BALL_RADIUS - 300.0
+    flat = pass_bounds(ball_x=ball_x, vx=300.0, vy=0.0)[0]
+    diagonal = pass_bounds(ball_x=ball_x, vx=300.0, vy=300.0)[0]
+    steep = pass_bounds(ball_x=ball_x, vx=1e-3, vy=1000.0)[0]
+    assert flat < diagonal < steep
+
+
+@pytest.mark.parametrize(
+    ("distance", "expected"),
+    [(300.0, 10.0), (150.0, 5.0), (60.0, 2.0)],
+)
+def test_distance_shrinks_the_bound(distance, expected):
+    # (c) Near-vertical path, so theta is about 90 and the angle factor is 1.
+    ball_x = AI_PADDLE_X - BALL_RADIUS - distance
+    bound = pass_bounds(ball_x=ball_x, vx=1e-3, vy=1000.0)[0]
+    assert bound == pytest.approx(expected, abs=0.01)
+
+
+def test_bound_never_grows_as_the_ball_nears_the_paddle():
+    # (c) For every d in (0, 300], the bound is no larger than at any larger d.
+    contact = AI_PADDLE_X - BALL_RADIUS
+    previous = 0.0
+    for d in range(1, 301):
+        bound = pass_bounds(ball_x=contact - d, vx=1e-3, vy=1000.0)[0]
+        assert bound >= previous - 1e-12
+        previous = bound
+
+
+@pytest.mark.parametrize("seed", range(20))
+@pytest.mark.parametrize(
+    ("vx", "vy"),
+    [(300.0, 0.0), (300.0, 300.0), (300.0, -300.0), (1e-3, 1000.0), (30.0, 300.0)],
+)
+def test_one_pixel_from_contact_the_offset_is_tiny(monkeypatch, vx, vy, seed):
+    # (c) At 1 px from contact, the goal offset is at most 0.05 px for any angle.
+    ctrl = AIController(Difficulty.HARD, random.Random(seed))
+    ball_x = AI_PADDLE_X - BALL_RADIUS - 1.0
+    look(ctrl, 0.0, 300.0, 300.0, ball_x=ball_x, vx=vx, vy=vy)
+    predicted = predict_contact_y(
+        ball_x, 300.0, vx, vy, BALL_RADIUS, AI_PADDLE_X, PLAYFIELD_HEIGHT
+    )
+    assert predicted is not None
+    assert abs(ctrl.target - predicted) <= 0.05
+
+
+@pytest.mark.parametrize(
+    "ball_x", [AI_PADDLE_X - BALL_RADIUS, AI_PADDLE_X - BALL_RADIUS + 5.0]
+)
+def test_hard_at_or_past_contact_targets_the_ball_y_exactly(ball_x):
+    # (c) and (j): no prediction at contact or beyond, so no offset and no draw.
+    rng = FixedOffsetRandom(3.0)
+    ctrl = AIController(Difficulty.HARD, rng)
+    look(ctrl, 0.0, 300.0, 300.0, ball_x=ball_x, vx=300.0, vy=60.0)
+    assert ctrl.target == 300.0
+    assert rng.calls == []
+    assert not ctrl.uncertain
+
+
+def test_target_is_predicted_y_plus_offset(monkeypatch):
     use_settings(monkeypatch, Difficulty.HARD, reaction_delay=0.5, aim_error=10.0)
-    # Offset +10: target is 110. Paddle at 105 is 5 px above it, so move down.
+    # Ball at y 100 with no vertical speed, so the prediction is 100. Offset +10:
+    # target is 110. Paddle at 105 is 5 px above it, so move down.
     ctrl = AIController(Difficulty.HARD, FixedOffsetRandom(10.0))
-    assert look(ctrl, 0.0, 100.0, 105.0) == 1
+    assert look(ctrl, 0.0, 100.0, 105.0, vx=300.0) == 1
     # Paddle at 107 is only 3 px above the target, inside the dead zone.
     ctrl = AIController(Difficulty.HARD, FixedOffsetRandom(10.0))
-    assert look(ctrl, 0.0, 100.0, 107.0) == 0
+    assert look(ctrl, 0.0, 100.0, 107.0, vx=300.0) == 0
     # Offset -10: target is 90. Paddle at 95 is 5 px below it, so move up.
     ctrl = AIController(Difficulty.HARD, FixedOffsetRandom(-10.0))
-    assert look(ctrl, 0.0, 100.0, 95.0) == -1
+    assert look(ctrl, 0.0, 100.0, 95.0, vx=300.0) == -1
 
 
 @pytest.mark.parametrize(
@@ -315,14 +426,15 @@ def test_controller_does_not_import_paddle_or_ball_classes():
 def look_frames(difficulty, dt, frames=200):
     """Return the frame numbers on which the controller took a new look.
 
-    A look is seen as a call to rng.uniform(), which happens once per look.
+    A look is seen as a call to rng.uniform(). Easy and Medium draw once per look.
+    Hard draws once per pass when there is a prediction, which it has here.
     """
     rng = FixedOffsetRandom(0.0)
     ctrl = AIController(difficulty, rng)
     looks = []
     for frame in range(frames):
         before = len(rng.calls)
-        look(ctrl, dt, 0.0, 0.0)
+        look(ctrl, dt, 0.0, 0.0, ball_x=100.0, vx=1.0)
         if len(rng.calls) > before:
             looks.append(frame)
     return looks
@@ -417,10 +529,13 @@ def test_fixed_path_reverses_at_most_twice_with_default_aim(difficulty, seed):
 
 def test_aim_error_eases_toward_each_new_draw(monkeypatch):
     use_settings(monkeypatch, Difficulty.HARD, reaction_delay=0.5, aim_error=10.0)
-    ctrl = AIController(Difficulty.HARD, SequenceRandom([10.0, -10.0]))
-    look(ctrl, 0.0, 100.0, 100.0)  # first look takes the first draw at once
+    # Hard has four passes per look, all agreeing, so the goal is the draw itself.
+    draws = [10.0] * 4 + [-10.0] * 4
+    ctrl = AIController(Difficulty.HARD, SequenceRandom(draws))
+    # Ball at y 100 moving horizontally, so the prediction is 100.
+    look(ctrl, 0.0, 100.0, 100.0, vx=300.0)  # first look takes the first goal at once
     assert ctrl.target == pytest.approx(110.0)
-    look(ctrl, 0.5, 100.0, 100.0)  # second look draws -10 and eases toward it
+    look(ctrl, 0.5, 100.0, 100.0, vx=300.0)  # second look draws -10 and eases to it
     eased = 10.0 + (-10.0 - 10.0) * (1 - math.exp(-0.5 / AIM_SMOOTHING_TIME))
     assert ctrl.target == pytest.approx(100.0 + eased)
     assert ctrl.target > 100.0 - 10.0
@@ -544,7 +659,7 @@ def test_hard_aim_error_is_added_to_the_prediction(monkeypatch):
     # Ball at y 300 moving down, so the prediction is 390. The offset goes on top.
     look(ctrl, 0.0, 300.0, 300.0, vx=300.0, vy=60.0)
     assert ctrl.target == pytest.approx(397.0)
-    assert rng.calls == [(-10.0, 10.0)]
+    assert len(rng.calls) == AI_SETTINGS[Difficulty.HARD].passes
 
 
 def test_hard_prediction_changes_only_at_a_look(monkeypatch):
@@ -584,6 +699,190 @@ def test_easy_and_medium_aim_at_current_ball_y(monkeypatch, difficulty):
         assert predicted is not None
         assert ctrl.target != pytest.approx(predicted)
         ball_y += 25.0
+
+
+def test_hard_aims_at_predicted_contact_y_on_each_look(monkeypatch):
+    # (h) Hard's target at each look is predict_contact_y, with no offset.
+    use_settings(monkeypatch, Difficulty.HARD, aim_error=0.0)
+    ctrl = AIController(Difficulty.HARD, random.Random(0))
+    reaction_delay = AI_SETTINGS[Difficulty.HARD].reaction_delay
+    ball_y = 300.0
+    for _ in range(5):
+        look(ctrl, reaction_delay, ball_y, 300.0, vx=300.0, vy=60.0)
+        predicted = predict_contact_y(
+            500.0, ball_y, 300.0, 60.0, BALL_RADIUS, AI_PADDLE_X, PLAYFIELD_HEIGHT
+        )
+        assert predicted is not None
+        assert ctrl.target == pytest.approx(predicted)
+        ball_y += 25.0
+
+
+def test_hard_without_prediction_takes_no_draw_and_does_not_hold():
+    # (j) Moving away from the paddle: no offset, no draw, no hold. The stub rng
+    # records every call, so a draw would show up in the list.
+    rng = FixedOffsetRandom(5.0)
+    ctrl = AIController(Difficulty.HARD, rng)
+    assert look(ctrl, 0.0, 300.0, 300.0, vx=-300.0, vy=60.0) == 0
+    assert rng.calls == []
+    assert ctrl.target == 300.0
+    assert not ctrl.uncertain
+
+
+def test_hard_holds_still_while_passes_disagree(monkeypatch):
+    # (d) Spread 4.5 px: hold still, even 100 px from the target, until the next look.
+    use_settings(monkeypatch, Difficulty.HARD, reaction_delay=0.5, aim_error=10.0)
+    # Goal offset is the last pass. Spread is max minus min over the four passes.
+    rng = SequenceRandom([-4.5, 0.0, 0.0, 0.0])
+    ctrl = AIController(Difficulty.HARD, rng)
+    # Ball at y 300 moving across, so the prediction is 300. Paddle at 400.
+    assert look(ctrl, 0.0, 300.0, 400.0, vx=300.0) == 0
+    assert ctrl.uncertain
+    for _ in range(4):
+        assert look(ctrl, 0.1, 300.0, 400.0, vx=300.0) == 0
+    # Fifth call reaches 0.5 s and takes the next look, with spread 4.0 px.
+    rng.values = [-4.0, 0.0, 0.0, 0.0]
+    assert look(ctrl, 0.1, 300.0, 400.0, vx=300.0) == -1
+    assert not ctrl.uncertain
+
+
+def test_hard_spread_at_the_tolerance_is_certain(monkeypatch):
+    # (d) Exactly CERTAINTY_TOLERANCE is certain, a little more is not.
+    use_settings(monkeypatch, Difficulty.HARD, aim_error=10.0)
+    ctrl = AIController(
+        Difficulty.HARD, SequenceRandom([0.0, 0.0, 0.0, CERTAINTY_TOLERANCE])
+    )
+    look(ctrl, 0.0, 300.0, 300.0, vx=300.0)
+    assert not ctrl.uncertain
+    ctrl = AIController(
+        Difficulty.HARD, SequenceRandom([0.0, 0.0, 0.0, CERTAINTY_TOLERANCE + 0.5])
+    )
+    look(ctrl, 0.0, 300.0, 300.0, vx=300.0)
+    assert ctrl.uncertain
+
+
+def run_flight(difficulty, seed, vx, vy, ball_x=100.0, ball_y=300.0, frames=3600):
+    """Step one AI paddle against a ball in flight until it reaches contact.
+
+    The ball moves with pong/physics.py. Returns one record per frame, as
+    ``(ball_x, looked, direction, uncertain)``: the ball's x, whether the frame took
+    a look, the direction, and whether the controller was uncertain after the look.
+    """
+    rng = CountingRandom(seed)
+    ball = Ball(ball_x, ball_y, vx, vy, radius=BALL_RADIUS)
+    paddle = Paddle(AI_PADDLE_X, ball_y - 50, speed=AI_SETTINGS[difficulty].max_speed)
+    ctrl = AIController(difficulty, rng)
+    records = []
+    for _ in range(frames):
+        if ball.x >= contact_x():
+            break
+        before = rng.count
+        direction = look(
+            ctrl,
+            DT,
+            ball.y,
+            paddle.y + paddle.height / 2,
+            ball_x=ball.x,
+            vx=ball.vx,
+            vy=ball.vy,
+        )
+        looked = rng.count > before
+        records.append((ball.x, looked, direction, ctrl.uncertain))
+        paddle.move(direction, DT, PLAYFIELD_HEIGHT)
+        ball.step(DT, PLAYFIELD_HEIGHT)
+    return records
+
+
+class CountingRandom(random.Random):
+    """A seeded random source that counts its uniform() calls."""
+
+    def __init__(self, seed: int) -> None:
+        super().__init__(seed)
+        self.count = 0
+
+    def uniform(self, a: float, b: float) -> float:
+        self.count += 1
+        return super().uniform(a, b)
+
+
+FLIGHT_PATHS = [
+    (300.0, 0.0),
+    (300.0, 300.0),
+    (300.0, -300.0),
+    (30.0, 1000.0),
+    (30.0, 300.0),
+]
+"""Ball velocities (vx, vy) that cover horizontal, diagonal and near-vertical paths."""
+
+
+def test_far_first_looks_are_uncertain_for_most_seeds():
+    # (e) Right after a hit, the ball is 850 px from contact at about 84 degrees.
+    uncertain = 0
+    for seed in range(20):
+        ctrl = AIController(Difficulty.HARD, random.Random(seed))
+        look(ctrl, 0.0, 300.0, 300.0, ball_x=100.0, vx=30.0, vy=300.0)
+        if ctrl.uncertain:
+            uncertain += 1
+    print(f"Uncertain first looks on Hard: {uncertain} of 20")
+    assert uncertain >= 12
+
+
+@pytest.mark.parametrize("seed", range(20))
+@pytest.mark.parametrize(("vx", "vy"), FLIGHT_PATHS)
+def test_hard_is_certain_on_every_look_within_60_px(seed, vx, vy):
+    # (e) Any angle, any seed: at d <= 60 px the spread is at most 4 px.
+    records = run_flight(Difficulty.HARD, seed, vx, vy)
+    contact = AI_PADDLE_X - BALL_RADIUS
+    checked = [
+        uncertain
+        for ball_x, looked, _, uncertain in records
+        if looked and contact - ball_x <= 60.0
+    ]
+    assert checked
+    assert not any(checked)
+
+
+@pytest.mark.parametrize("seed", range(20))
+@pytest.mark.parametrize(("vx", "vy"), FLIGHT_PATHS)
+def test_hard_moves_only_when_certain(seed, vx, vy):
+    # (d) No non-zero direction on a look where the spread is above 4 px.
+    records = run_flight(Difficulty.HARD, seed, vx, vy)
+    for _, _, direction, uncertain in records:
+        if uncertain:
+            assert direction == 0
+
+
+def test_hard_holds_and_then_moves_on_a_fixed_path():
+    # (d) Seed 0 on a near-vertical flight: the first move is at a certain look,
+    # and there is at least one move.
+    records = run_flight(Difficulty.HARD, 0, vx=30.0, vy=300.0)
+    first_move = next(i for i, (_, _, d, _) in enumerate(records) if d != 0)
+    assert records[first_move][3] is False
+    assert any(d != 0 for _, _, d, _ in records)
+
+
+def flight_targets(difficulty, seed, frames=600):
+    """Return the direction and target of each frame on a fixed flight path."""
+    rng = random.Random(seed)
+    ball = Ball(500.0, 300.0, 300.0, 60.0, radius=BALL_RADIUS)
+    ctrl = AIController(difficulty, rng)
+    out = []
+    for _ in range(frames):
+        direction = look(ctrl, DT, ball.y, 300.0, ball_x=ball.x, vx=ball.vx, vy=ball.vy)
+        out.append((direction, ctrl.target))
+        ball.step(DT, PLAYFIELD_HEIGHT)
+    return out
+
+
+@pytest.mark.parametrize("difficulty", list(Difficulty))
+def test_same_seed_gives_the_same_frames(difficulty):
+    # (g) Two controllers with the same seed agree on every frame.
+    assert flight_targets(difficulty, 0) == flight_targets(difficulty, 0)
+
+
+@pytest.mark.parametrize("difficulty", list(Difficulty))
+def test_different_seeds_give_different_targets(difficulty):
+    # (g) Seeds 0 and 1 differ on the same path.
+    assert flight_targets(difficulty, 0) != flight_targets(difficulty, 1)
 
 
 # Seeded rallies: Hard against Easy, using the match rules in pong/game.py.
@@ -641,10 +940,15 @@ def play_rally(seed, hard_on_left):
 def test_hard_wins_more_seeded_rallies_than_easy():
     hard_wins = 0
     easy_wins = 0
+    no_score = 0
     for seed in range(RALLY_SEEDS):
         winner = play_rally(seed, hard_on_left=seed % 2 == 1)
         if winner is True:
             hard_wins += 1
         elif winner is False:
             easy_wins += 1
-    assert hard_wins > easy_wins
+        else:
+            no_score += 1
+    print(f"Hard wins {hard_wins}, Easy wins {easy_wins}, no score {no_score}")
+    assert no_score <= 20
+    assert 120 <= hard_wins <= 170
