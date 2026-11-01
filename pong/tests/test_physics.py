@@ -6,11 +6,15 @@ import pytest
 
 from pong.physics import (
     MAX_BOUNCE_ANGLE_DEGREES,
+    MAX_SPEED,
     PADDLE_INFLUENCE,
+    SERVE_SPEED,
+    SPEED_GAIN,
     Ball,
     Paddle,
     ball_hits_paddle,
     bounce_velocity,
+    next_speed,
 )
 
 PHYSICS_SOURCE = Path(__file__).parent.parent / "physics.py"
@@ -570,3 +574,67 @@ def test_paddle_vy_is_deterministic():
 def test_bounce_velocity_non_finite_paddle_vy_raises(paddle_vy):
     with pytest.raises(ValueError):
         bounce_velocity(0.0, 300.0, 1, paddle_vy=paddle_vy)
+
+
+def test_speed_constants():
+    assert SERVE_SPEED == 300.0
+    assert SPEED_GAIN == 1.05
+    assert MAX_SPEED == 900.0
+
+
+def test_next_speed_is_speed_times_gain_below_cap():
+    assert next_speed(300.0) == pytest.approx(315.0)
+
+
+def test_next_speed_compounds_over_repeated_hits():
+    speed = SERVE_SPEED
+    speed = next_speed(speed)
+    assert speed == pytest.approx(315.0)
+    speed = next_speed(speed)
+    assert speed == pytest.approx(330.75)
+
+
+def test_speed_is_still_below_cap_after_22_hits():
+    speed = SERVE_SPEED
+    for _ in range(22):
+        speed = next_speed(speed)
+    assert speed == pytest.approx(877.6, abs=0.1)
+    assert speed < MAX_SPEED
+
+
+def test_speed_reaches_exact_cap_after_23_hits():
+    speed = SERVE_SPEED
+    for _ in range(23):
+        speed = next_speed(speed)
+    assert speed == MAX_SPEED
+
+
+def test_next_speed_at_cap_stays_at_cap():
+    assert next_speed(900.0) == 900.0
+
+
+def test_more_hits_keep_speed_at_cap():
+    speed = SERVE_SPEED
+    for _ in range(50):
+        speed = next_speed(speed)
+    assert speed == MAX_SPEED
+    for _ in range(10):
+        speed = next_speed(speed)
+    assert speed == 900.0
+
+
+@pytest.mark.parametrize(
+    "speed", [0.0, 1.0, 300.0, 899.0, 900.0, 901.0, 5000.0, math.inf]
+)
+def test_next_speed_is_never_above_max(speed):
+    assert next_speed(speed) <= MAX_SPEED
+
+
+@pytest.mark.parametrize("speed", [0.0, 1.0, 300.0, 850.0])
+def test_next_speed_below_cap_is_gain_times_speed(speed):
+    assert next_speed(speed) == pytest.approx(speed * SPEED_GAIN)
+
+
+def test_next_speed_clamps_speed_above_cap():
+    assert next_speed(5000.0) == MAX_SPEED
+    assert next_speed(math.inf) == MAX_SPEED

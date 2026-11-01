@@ -13,6 +13,25 @@ MAX_BOUNCE_ANGLE_DEGREES = 60.0
 PADDLE_INFLUENCE = 0.25
 """Fraction of the paddle's vertical velocity added to the ball's vertical velocity."""
 
+SERVE_SPEED = 300.0
+"""Ball speed in px/s when a rally starts."""
+
+SPEED_GAIN = 1.05
+"""Multiplier applied to the ball's speed after each paddle hit."""
+
+MAX_SPEED = 900.0
+"""Upper limit on the ball's speed in px/s."""
+
+
+def next_speed(speed: float) -> float:
+    """Return the ball's speed after one paddle hit, capped at ``MAX_SPEED``.
+
+    The result is ``speed * SPEED_GAIN``, or ``MAX_SPEED`` if that is larger.
+    The result is never above ``MAX_SPEED``, so a speed already at or above the
+    cap stays at ``MAX_SPEED``.
+    """
+    return min(speed * SPEED_GAIN, MAX_SPEED)
+
 
 def bounce_velocity(
     offset: float, speed: float, direction: int, paddle_vy: float = 0.0
