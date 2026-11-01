@@ -15,6 +15,9 @@ dev = ["pytest", "ruff", "mypy"]
 [tool.setuptools.packages.find]
 include = ["pong*"]
 
+[tool.setuptools.package-data]
+pong = ["sounds/*.wav"]
+
 [tool.pytest.ini_options]
 testpaths = ["pong/tests"]
 

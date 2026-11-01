@@ -14,7 +14,7 @@ from typing import Protocol
 import pygame
 
 from pong.ai import AIController, Difficulty
-from pong.game import Match, Mode, Player
+from pong.game import GameEvent, Match, Mode, Player
 from pong.playfield import PLAYFIELD_HEIGHT, PLAYFIELD_WIDTH, fit_playfield
 from pong.settings import (
     RESERVED_KEY,
@@ -209,6 +209,54 @@ def _handle_key_down(key: int, settings: Settings, match: Match) -> None:
     }
     if key not in paddle_codes:
         match.start_rally()
+
+
+SOUNDS_DIR = Path(__file__).resolve().parent / "sounds"
+"""Folder of the sound effect WAV files, made by ``scripts/make_sounds.py``."""
+
+SOUND_FILES: dict[GameEvent, str] = {
+    GameEvent.PADDLE_HIT: "paddle_hit.wav",
+    GameEvent.WALL_BOUNCE: "wall_bounce.wav",
+    GameEvent.SCORE: "score.wav",
+    GameEvent.VICTORY: "victory.wav",
+}
+"""The sound that plays for each match event."""
+
+
+class SoundPlayer:
+    """Plays the sound for each match event, if the mixer and the files load.
+
+    If the mixer cannot start, or a sound cannot be loaded, the player stays
+    silent and the game carries on. ``play`` reads the audio settings on each
+    call, so a change in the Audio screen applies at once.
+    """
+
+    def __init__(self) -> None:
+        self._sounds: dict[GameEvent, pygame.mixer.Sound] = {}
+        try:
+            pygame.mixer.init()
+            self._sounds = {
+                event: pygame.mixer.Sound(str(SOUNDS_DIR / name))
+                for event, name in SOUND_FILES.items()
+            }
+        except pygame.error:
+            # No audio device, or a file failed to load: run with sound off.
+            self._sounds = {}
+
+    def play(self, events: list[GameEvent], settings: Settings) -> None:
+        """Play one sound per event in ``events``, if audio is enabled.
+
+        Each sound's volume is ``settings.volume / 100``, set just before it plays.
+        Nothing plays when ``settings.audio_enabled`` is False.
+        """
+        if not settings.audio_enabled:
+            return
+        for event in events:
+            sound = self._sounds.get(event)
+            if sound is None:
+                continue
+            sound.set_volume(settings.volume / 100)
+            sound.play()
 
 
 # The main menu. The state and logic in this section use no pygame names: only
@@ -772,6 +820,7 @@ def main() -> int:
     path = config_path(os.environ, Path.home())
     settings = load_settings(path)
     menu = MainMenu(settings, path)
+    sounds = SoundPlayer()
     screen = pygame.display.set_mode(
         (PLAYFIELD_WIDTH, PLAYFIELD_HEIGHT), pygame.RESIZABLE
     )
@@ -829,7 +878,8 @@ def main() -> int:
                 p1_direction, p2_direction = _read_directions(
                     pygame.key.get_pressed(), settings, match, ai, dt
                 )
-                match.update(dt, p1_direction, p2_direction)
+                events = match.update(dt, p1_direction, p2_direction)
+                sounds.play(events, settings)
             draw_frame(screen, match)
             if pause is not None:
                 draw_pause_menu(screen, pause)
