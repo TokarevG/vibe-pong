@@ -6,6 +6,7 @@ import pytest
 
 from pong.physics import (
     MAX_BOUNCE_ANGLE_DEGREES,
+    PADDLE_INFLUENCE,
     Ball,
     Paddle,
     ball_hits_paddle,
@@ -496,3 +497,76 @@ def test_bounce_velocity_direction_sets_sign_of_vx_only():
     vx_l, vy_l = bounce_velocity(0.4, 300.0, -1)
     assert vx_l == pytest.approx(-vx_r)
     assert vy_l == pytest.approx(vy_r)
+
+
+def test_paddle_influence_is_a_quarter():
+    assert PADDLE_INFLUENCE == 0.25
+
+
+def test_bounce_velocity_paddle_vy_defaults_to_zero():
+    assert bounce_velocity(0.3, 300.0, 1) == bounce_velocity(
+        0.3, 300.0, 1, paddle_vy=0.0
+    )
+
+
+@pytest.mark.parametrize("offset", [-1.0, -0.4, 0.0, 0.5, 1.0])
+@pytest.mark.parametrize("direction", [1, -1])
+@pytest.mark.parametrize("speed", [0.0, 300.0])
+def test_stationary_paddle_matches_bounce_without_paddle_vy(offset, direction, speed):
+    assert bounce_velocity(offset, speed, direction, paddle_vy=0.0) == (
+        bounce_velocity(offset, speed, direction)
+    )
+
+
+def test_paddle_moving_down_center_hit_sends_ball_down():
+    _, vy = bounce_velocity(0.0, 300.0, 1, paddle_vy=400.0)
+    assert vy > 0
+
+
+def test_paddle_moving_up_center_hit_sends_ball_up():
+    _, vy = bounce_velocity(0.0, 300.0, 1, paddle_vy=-400.0)
+    assert vy < 0
+
+
+def test_paddle_moving_down_center_hit_has_expected_vy():
+    # Unscaled vy is PADDLE_INFLUENCE * paddle_vy, then scaled to the speed.
+    speed, paddle_vy = 300.0, 400.0
+    raw_vy = PADDLE_INFLUENCE * paddle_vy
+    expected_vy = speed * raw_vy / math.hypot(speed, raw_vy)
+    vx, vy = bounce_velocity(0.0, speed, 1, paddle_vy=paddle_vy)
+    assert vy == pytest.approx(expected_vy)
+    assert vx == pytest.approx(speed * speed / math.hypot(speed, raw_vy))
+
+
+@pytest.mark.parametrize("offset", [-1.0, -0.5, 0.0, 0.5, 1.0])
+@pytest.mark.parametrize("direction", [1, -1])
+@pytest.mark.parametrize("paddle_vy", [-900.0, -50.0, 50.0, 900.0])
+@pytest.mark.parametrize("speed", [1.0, 300.0, 1234.5])
+def test_paddle_vy_preserves_speed(offset, direction, paddle_vy, speed):
+    vx, vy = bounce_velocity(offset, speed, direction, paddle_vy=paddle_vy)
+    assert math.hypot(vx, vy) == pytest.approx(speed)
+
+
+@pytest.mark.parametrize("offset", [-1.0, -0.5, 0.0, 0.5, 1.0])
+@pytest.mark.parametrize("paddle_vy", [-900.0, 900.0])
+def test_paddle_vy_does_not_change_sign_of_vx(offset, paddle_vy):
+    vx_right, _ = bounce_velocity(offset, 300.0, 1, paddle_vy=paddle_vy)
+    vx_left, _ = bounce_velocity(offset, 300.0, -1, paddle_vy=paddle_vy)
+    assert vx_right > 0
+    assert vx_left < 0
+
+
+def test_paddle_vy_zero_speed_gives_zero_velocity():
+    assert bounce_velocity(0.0, 0.0, 1, paddle_vy=400.0) == (0.0, 0.0)
+
+
+def test_paddle_vy_is_deterministic():
+    first = bounce_velocity(0.2, 300.0, -1, paddle_vy=123.0)
+    second = bounce_velocity(0.2, 300.0, -1, paddle_vy=123.0)
+    assert first == second
+
+
+@pytest.mark.parametrize("paddle_vy", [math.inf, -math.inf, math.nan])
+def test_bounce_velocity_non_finite_paddle_vy_raises(paddle_vy):
+    with pytest.raises(ValueError):
+        bounce_velocity(0.0, 300.0, 1, paddle_vy=paddle_vy)

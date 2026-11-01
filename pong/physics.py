@@ -10,8 +10,13 @@ import math
 MAX_BOUNCE_ANGLE_DEGREES = 60.0
 """Angle from horizontal, in degrees, for a hit at the paddle's far edge."""
 
+PADDLE_INFLUENCE = 0.25
+"""Fraction of the paddle's vertical velocity added to the ball's vertical velocity."""
 
-def bounce_velocity(offset: float, speed: float, direction: int) -> tuple[float, float]:
+
+def bounce_velocity(
+    offset: float, speed: float, direction: int, paddle_vy: float = 0.0
+) -> tuple[float, float]:
     """Return the ball's ``(vx, vy)`` after a paddle hit, from the impact position.
 
     ``offset`` is the normalized impact position on the paddle: -1 at the top
@@ -19,21 +24,36 @@ def bounce_velocity(offset: float, speed: float, direction: int) -> tuple[float,
     clamped to that range. The angle from horizontal is
     ``offset * MAX_BOUNCE_ANGLE_DEGREES``, so ``vx = direction * speed * cos(angle)``
     and ``vy = speed * sin(angle)``. Negative ``vy`` moves the ball up the screen.
-    The speed is preserved: ``sqrt(vx**2 + vy**2) == speed``.
+
+    ``paddle_vy`` is the paddle's vertical velocity at impact in px/s, positive
+    down the screen. It adds ``PADDLE_INFLUENCE * paddle_vy`` to ``vy``, and the
+    result is then scaled so the speed is still ``speed``. The sign of ``vx`` is
+    never changed by ``paddle_vy``. With ``paddle_vy == 0`` the result is the
+    same as without it. The speed is preserved: ``sqrt(vx**2 + vy**2) == speed``.
 
     Raises:
-        ValueError: if ``direction`` is not +1 or -1, or ``speed`` is negative.
+        ValueError: if ``direction`` is not +1 or -1, ``speed`` is negative, or
+            ``paddle_vy`` is not finite.
     """
     if direction not in (1, -1):
         raise ValueError(f"direction must be 1 or -1, got {direction}")
     if speed < 0:
         raise ValueError(f"speed must not be negative, got {speed}")
+    if not math.isfinite(paddle_vy):
+        raise ValueError(f"paddle_vy must be finite, got {paddle_vy}")
 
     clamped = min(max(offset, -1.0), 1.0)
     angle = math.radians(clamped * MAX_BOUNCE_ANGLE_DEGREES)
     vx = direction * speed * math.cos(angle)
     vy = speed * math.sin(angle)
-    return vx, vy
+    if paddle_vy == 0:
+        return vx, vy
+
+    vy += PADDLE_INFLUENCE * paddle_vy
+    magnitude = math.hypot(vx, vy)
+    # magnitude is zero only when speed is zero, so the ball stays still.
+    scale = speed / magnitude if magnitude > 0 else 0.0
+    return vx * scale, vy * scale
 
 
 def _travel(velocity: float, dt: float) -> float:
