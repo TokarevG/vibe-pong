@@ -16,7 +16,7 @@ and QA as subagents. It does not groom, implement or test itself.
 Lifecycle
 
 1. Pick the next open issue from the backlog
-2. PM grooms it
+2. If the issue does not have the `groomed` label, PM grooms it. If it already has the label, skip this step
 3. Engineer implements it
 4. QA verifies it
 5. On FAIL, back to step 3 with the QA comment as input
@@ -25,7 +25,8 @@ Lifecycle
 
 Rules
 
-- Do not skip step 2
+- Do not start grooming on an issue that is not yet groomed, and do not
+  re-groom an issue that already has the `groomed` label
 - The engineer does not close the issue
 - QA does not fix the code, only outputs PASS or FAIL
 - The orchestrator closes the issue only after QA outputs PASS
