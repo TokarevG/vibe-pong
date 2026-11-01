@@ -375,16 +375,132 @@ def _handle_menu_key(key: int, menu: MainMenu) -> MenuOutcome:
     return menu.handle(action)
 
 
+# The pause menu, opened with Esc during a match. Like the main menu, its state
+# and logic use no pygame names. It uses the same fixed navigation keys.
+
+PAUSE_FIRST_ROW_Y = 244.0
+"""Vertical centre of the first pause line, in logical units. Centres the three lines."""
+PAUSE_ROW_SPACING = 56.0
+"""Distance between the centres of neighbouring pause lines, in logical units."""
+PAUSE_SHADE_ALPHA = 160
+"""Opacity of the black shade drawn over the frozen playfield, from 0 to 255."""
+
+
+class PauseItem(Enum):
+    """Rows of the pause menu, top to bottom."""
+
+    RESUME = auto()
+    RESTART = auto()
+    MAIN_MENU = auto()
+
+
+PAUSE_ITEMS: tuple[PauseItem, ...] = tuple(PauseItem)
+
+_PAUSE_LABELS = {
+    PauseItem.RESUME: "Resume",
+    PauseItem.RESTART: "Restart Match",
+    PauseItem.MAIN_MENU: "Main Menu",
+}
+
+
+class PauseOutcome(Enum):
+    """What the pause menu asks the program to do after an action."""
+
+    NONE = auto()
+    RESUME = auto()
+    RESTART = auto()
+    MAIN_MENU = auto()
+
+
+_PAUSE_OUTCOMES = {
+    PauseItem.RESUME: PauseOutcome.RESUME,
+    PauseItem.RESTART: PauseOutcome.RESTART,
+    PauseItem.MAIN_MENU: PauseOutcome.MAIN_MENU,
+}
+
+
+class PauseMenu:
+    """The pause menu's state: which row is highlighted.
+
+    The highlight starts on Resume. Up and Down wrap around. Enter activates the
+    highlighted row, and Esc resumes, as Resume does.
+    """
+
+    def __init__(self) -> None:
+        self.highlight = 0
+
+    @property
+    def selected(self) -> PauseItem:
+        """Return the highlighted row."""
+        return PAUSE_ITEMS[self.highlight]
+
+    def lines(self) -> list[str]:
+        """Return the text of each row, top to bottom."""
+        return [_PAUSE_LABELS[item] for item in PAUSE_ITEMS]
+
+    def handle(self, action: MenuAction) -> PauseOutcome:
+        """Apply one navigation action and return what the program should do next."""
+        if action is MenuAction.UP:
+            self.highlight = (self.highlight - 1) % len(PAUSE_ITEMS)
+            return PauseOutcome.NONE
+        if action is MenuAction.DOWN:
+            self.highlight = (self.highlight + 1) % len(PAUSE_ITEMS)
+            return PauseOutcome.NONE
+        if action is MenuAction.BACK:
+            return PauseOutcome.RESUME
+        return _PAUSE_OUTCOMES[self.selected]
+
+
+def _handle_pause_key(key: int, pause: PauseMenu) -> PauseOutcome:
+    """Pass a KEYDOWN key code to the pause menu. Keys that are not menu keys do nothing."""
+    action = _MENU_KEYS.get(key)
+    if action is None:
+        return PauseOutcome.NONE
+    return pause.handle(action)
+
+
 def _start_match(settings: Settings) -> tuple[Match, AIController]:
     """Return a new match in the serving state, with the AI for its difficulty."""
     match = Match(settings.mode, settings.difficulty)
     return match, AIController(settings.difficulty, random.Random())
 
 
+def _restart_match(match: Match, settings: Settings) -> AIController:
+    """Reset ``match`` to a fresh serving match and return a new AI controller.
+
+    The controller is new so its reaction timers start over, as they do at the
+    start of a match.
+    """
+    match.restart()
+    return AIController(settings.difficulty, random.Random())
+
+
 @functools.lru_cache(maxsize=4)
 def _menu_font(size: int) -> pygame.font.Font:
     """Return the default font at ``size`` pixels, cached by size."""
     return pygame.font.Font(None, size)
+
+
+def _draw_lines(
+    surface: pygame.Surface,
+    lines: list[str],
+    highlighted: int,
+    first_row_y: float,
+    row_spacing: float,
+) -> None:
+    """Draw ``lines`` centred across the playfield, one per row, without filling.
+
+    Rows are placed in logical units, starting with the centre of the first row
+    at ``first_row_y``. The line at index ``highlighted`` is white, the others dim.
+    """
+    scale, offset_x, offset_y = fit_playfield(*surface.get_size())
+    font = _menu_font(max(1, round(MENU_FONT_SIZE * scale)))
+    centre_x = round(offset_x + PLAYFIELD_WIDTH / 2 * scale)
+    for index, text in enumerate(lines):
+        colour = WHITE if index == highlighted else DIM_TEXT
+        rendered = font.render(text, True, colour)
+        centre_y = round(offset_y + (first_row_y + index * row_spacing) * scale)
+        surface.blit(rendered, rendered.get_rect(center=(centre_x, centre_y)))
 
 
 def draw_menu(surface: pygame.Surface, menu: MainMenu) -> None:
@@ -399,18 +515,38 @@ def draw_menu(surface: pygame.Surface, menu: MainMenu) -> None:
     if width <= 0 or height <= 0:
         return
 
-    scale, offset_x, offset_y = fit_playfield(width, height)
     surface.fill(BLACK)
-    font = _menu_font(max(1, round(MENU_FONT_SIZE * scale)))
-    centre_x = round(offset_x + PLAYFIELD_WIDTH / 2 * scale)
-    highlighted = menu.highlighted_line
-    for index, text in enumerate(menu.lines()):
-        colour = WHITE if index == highlighted else DIM_TEXT
-        rendered = font.render(text, True, colour)
-        centre_y = round(
-            offset_y + (MENU_FIRST_ROW_Y + index * MENU_ROW_SPACING) * scale
-        )
-        surface.blit(rendered, rendered.get_rect(center=(centre_x, centre_y)))
+    _draw_lines(
+        surface,
+        menu.lines(),
+        menu.highlighted_line,
+        MENU_FIRST_ROW_Y,
+        MENU_ROW_SPACING,
+    )
+
+
+def draw_pause_menu(surface: pygame.Surface, pause: PauseMenu) -> None:
+    """Draw the pause menu over the playfield already drawn on ``surface``.
+
+    The whole surface is shaded with black at ``PAUSE_SHADE_ALPHA``, so the frozen
+    playfield stays visible underneath. The rows are drawn over the shade, with the
+    highlighted row white and the others dim. Nothing is drawn when the width or
+    height is 0. Only reads ``pause``.
+    """
+    width, height = surface.get_size()
+    if width <= 0 or height <= 0:
+        return
+
+    shade = pygame.Surface((width, height), pygame.SRCALPHA)
+    shade.fill((*BLACK, PAUSE_SHADE_ALPHA))
+    surface.blit(shade, (0, 0))
+    _draw_lines(
+        surface,
+        pause.lines(),
+        pause.highlight,
+        PAUSE_FIRST_ROW_Y,
+        PAUSE_ROW_SPACING,
+    )
 
 
 def main() -> int:
@@ -427,6 +563,8 @@ def main() -> int:
     # Both are None while the menu is showing. Start Game sets them.
     match: Match | None = None
     ai: AIController | None = None
+    # Set while the pause menu is open during a match. Its match is paused.
+    pause: PauseMenu | None = None
 
     running = True
     while running:
@@ -438,23 +576,46 @@ def main() -> int:
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.KEYDOWN:
-                if match is not None and ai is not None:
-                    _handle_key_down(event.key, settings, match)
-                else:
+                if match is None or ai is None:
                     outcome = _handle_menu_key(event.key, menu)
                     if outcome is MenuOutcome.START_GAME:
                         match, ai = _start_match(menu.settings)
                     elif outcome is MenuOutcome.QUIT:
                         running = False
+                elif pause is not None:
+                    pause_outcome = _handle_pause_key(event.key, pause)
+                    if pause_outcome is PauseOutcome.RESUME:
+                        match.toggle_pause()
+                        pause = None
+                    elif pause_outcome is PauseOutcome.RESTART:
+                        ai = _restart_match(match, settings)
+                        pause = None
+                    elif pause_outcome is PauseOutcome.MAIN_MENU:
+                        match = None
+                        ai = None
+                        pause = None
+                elif event.key == pygame.K_ESCAPE:
+                    # toggle_pause does nothing once someone has won, so the menu
+                    # opens only if the match really paused.
+                    match.toggle_pause()
+                    if match.paused:
+                        pause = PauseMenu()
+                else:
+                    _handle_key_down(event.key, settings, match)
             elif event.type == pygame.VIDEORESIZE and event.w > 0 and event.h > 0:
                 screen = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE)
 
         if match is not None and ai is not None:
-            p1_direction, p2_direction = _read_directions(
-                pygame.key.get_pressed(), settings, match, ai, dt
-            )
-            match.update(dt, p1_direction, p2_direction)
+            # While paused the simulation and the AI are not advanced, so the
+            # playfield stays frozen and the AI's timers stop.
+            if pause is None:
+                p1_direction, p2_direction = _read_directions(
+                    pygame.key.get_pressed(), settings, match, ai, dt
+                )
+                match.update(dt, p1_direction, p2_direction)
             draw_frame(screen, match)
+            if pause is not None:
+                draw_pause_menu(screen, pause)
         else:
             draw_menu(screen, menu)
         pygame.display.flip()
