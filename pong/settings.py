@@ -4,6 +4,7 @@ This module must not import pygame. It never reads the real environment or
 home directory itself; callers pass them in, so the logic can be tested.
 """
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,6 +19,10 @@ CONFIG_FILE_NAME = "config.json"
 BINDABLE_ACTIONS = frozenset({"p1_up", "p1_down", "p2_up", "p2_down"})
 # Esc is reserved for pause and may not be bound to any action.
 RESERVED_KEY = "escape"
+
+# Stored names for the enums in the config file.
+_MODE_NAMES = {"single_player": Mode.SINGLE_PLAYER, "two_player": Mode.TWO_PLAYER}
+_DIFFICULTY_NAMES = {difficulty.value: difficulty for difficulty in Difficulty}
 
 
 def _default_bindings() -> dict[str, str]:
@@ -83,3 +88,71 @@ def find_binding_conflicts(bindings: Mapping[str, str]) -> list[str]:
         ):
             conflicts.add(action)
     return sorted(conflicts)
+
+
+def _parse_mode(value: object) -> Mode | None:
+    if isinstance(value, str):
+        return _MODE_NAMES.get(value)
+    return None
+
+
+def _parse_difficulty(value: object) -> Difficulty | None:
+    if isinstance(value, str):
+        return _DIFFICULTY_NAMES.get(value)
+    return None
+
+
+def _parse_volume(value: object) -> int | None:
+    # bool is a subclass of int, so it must be excluded explicitly.
+    if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 100:
+        return value
+    return None
+
+
+def _parse_bindings(value: object) -> dict[str, str] | None:
+    """Return the valid action bindings, with defaults for the rest.
+
+    Returns None when ``value`` is not an object at all.
+    """
+    if not isinstance(value, dict):
+        return None
+    defaults = _default_bindings()
+    bindings: dict[str, str] = {}
+    for action, default_key in defaults.items():
+        key = value.get(action)
+        bindings[action] = key if isinstance(key, str) and key else default_key
+    return bindings
+
+
+def load_settings(path: Path) -> Settings:
+    """Load settings from ``path``, falling back to defaults for bad values.
+
+    Never raises for any file content. A missing or unreadable file, invalid
+    UTF-8, invalid JSON, or a top-level value that is not an object gives
+    ``default_settings()``. Each field is checked on its own, so a bad field
+    gets only its own default. If the bindings conflict, all four are reset.
+    """
+    try:
+        data: object = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError):
+        return default_settings()
+    if not isinstance(data, dict):
+        return default_settings()
+
+    settings = default_settings()
+    mode = _parse_mode(data.get("mode"))
+    if mode is not None:
+        settings.mode = mode
+    difficulty = _parse_difficulty(data.get("difficulty"))
+    if difficulty is not None:
+        settings.difficulty = difficulty
+    audio_enabled = data.get("audio_enabled")
+    if isinstance(audio_enabled, bool):
+        settings.audio_enabled = audio_enabled
+    volume = _parse_volume(data.get("volume"))
+    if volume is not None:
+        settings.volume = volume
+    bindings = _parse_bindings(data.get("bindings"))
+    if bindings is not None and not find_binding_conflicts(bindings):
+        settings.bindings = bindings
+    return settings
