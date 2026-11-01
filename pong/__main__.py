@@ -724,6 +724,127 @@ def _handle_pause_key(key: int, pause: PauseMenu) -> PauseOutcome:
     return pause.handle(action)
 
 
+# The game-over screen, shown when a match is won. Its state and logic use no
+# pygame names. It uses the same fixed navigation keys as the other menus.
+
+GAME_OVER_TITLE_Y = 120.0
+"""Vertical centre of the winner line, in logical units."""
+GAME_OVER_LABEL_Y = 200.0
+"""Vertical centre of the side labels above the final score, in logical units."""
+GAME_OVER_SCORE_Y = 260.0
+"""Vertical centre of the final score, in logical units."""
+GAME_OVER_FIRST_ROW_Y = 400.0
+"""Vertical centre of the first option, in logical units."""
+SCORE_SEPARATOR = "–"
+"""The en dash between the two scores, as in "11 – 7"."""
+
+
+class GameOverItem(Enum):
+    """Rows of the game-over screen, top to bottom."""
+
+    REMATCH = auto()
+    MAIN_MENU = auto()
+    QUIT = auto()
+
+
+GAME_OVER_ITEMS: tuple[GameOverItem, ...] = tuple(GameOverItem)
+
+_GAME_OVER_LABELS = {
+    GameOverItem.REMATCH: "Rematch",
+    GameOverItem.MAIN_MENU: "Main Menu",
+    GameOverItem.QUIT: "Quit",
+}
+
+
+class GameOverOutcome(Enum):
+    """What the game-over screen asks the program to do after an action."""
+
+    NONE = auto()
+    REMATCH = auto()
+    MAIN_MENU = auto()
+    QUIT = auto()
+
+
+_GAME_OVER_OUTCOMES = {
+    GameOverItem.REMATCH: GameOverOutcome.REMATCH,
+    GameOverItem.MAIN_MENU: GameOverOutcome.MAIN_MENU,
+    GameOverItem.QUIT: GameOverOutcome.QUIT,
+}
+
+
+def side_label(player: Player, mode: Mode) -> str:
+    """Return the name shown for ``player``: the right side is "Computer" in single-player."""
+    if player is Player.P1:
+        return "Player 1"
+    if mode is Mode.SINGLE_PLAYER:
+        return "Computer"
+    return "Player 2"
+
+
+class GameOverScreen:
+    """The game-over screen's state: the winner, the final score and the highlighted option.
+
+    Built from a match that has a winner. The scores are copied when the screen is
+    built. The highlight starts on Rematch. Up and Down wrap around. Enter activates
+    the highlighted option. Esc, Left and Right do nothing here, so Esc does not open
+    the pause menu.
+    """
+
+    def __init__(self, match: Match) -> None:
+        winner = match.score.winner()
+        if winner is None:
+            raise ValueError("the game-over screen needs a match with a winner")
+        self.winner = winner
+        self.mode = match.mode
+        self.points = {player: match.score.points(player) for player in Player}
+        self.highlight = 0
+
+    @property
+    def selected(self) -> GameOverItem:
+        """Return the highlighted option."""
+        return GAME_OVER_ITEMS[self.highlight]
+
+    def label(self, player: Player) -> str:
+        """Return the name shown for ``player`` on this screen."""
+        return side_label(player, self.mode)
+
+    def winner_text(self) -> str:
+        """Return the winner line, for example "Player 1 wins"."""
+        return f"{self.label(self.winner)} wins"
+
+    def score_text(self) -> str:
+        """Return the final score, for example "11 – 7", in Player 1 then Player 2 order."""
+        return f"{self.points[Player.P1]} {SCORE_SEPARATOR} {self.points[Player.P2]}"
+
+    def lines(self) -> list[str]:
+        """Return the text of each option, top to bottom."""
+        return [_GAME_OVER_LABELS[item] for item in GAME_OVER_ITEMS]
+
+    def handle(self, action: MenuAction) -> GameOverOutcome:
+        """Apply one navigation action and return what the program should do next."""
+        if action is MenuAction.UP:
+            self.highlight = (self.highlight - 1) % len(GAME_OVER_ITEMS)
+            return GameOverOutcome.NONE
+        if action is MenuAction.DOWN:
+            self.highlight = (self.highlight + 1) % len(GAME_OVER_ITEMS)
+            return GameOverOutcome.NONE
+        if action is not MenuAction.ENTER:
+            # Esc, Left and Right do nothing on the game-over screen.
+            return GameOverOutcome.NONE
+        return _GAME_OVER_OUTCOMES[self.selected]
+
+
+def _handle_game_over_key(key: int, screen: GameOverScreen) -> GameOverOutcome:
+    """Pass a KEYDOWN key code to the game-over screen. Keys that are not menu keys do nothing.
+
+    Paddle and rally keys are not menu keys, so they do nothing here.
+    """
+    action = _MENU_KEYS.get(key)
+    if action is None:
+        return GameOverOutcome.NONE
+    return screen.handle(action)
+
+
 def _start_match(settings: Settings) -> tuple[Match, AIController]:
     """Return a new match in the serving state, with the AI for its difficulty."""
     match = Match(settings.mode, settings.difficulty)
@@ -814,6 +935,39 @@ def draw_pause_menu(surface: pygame.Surface, pause: PauseMenu) -> None:
     )
 
 
+def draw_game_over(surface: pygame.Surface, screen: GameOverScreen) -> None:
+    """Draw the game-over screen onto ``surface``, replacing the match view.
+
+    The surface is filled with black. The winner line, the side labels and the final
+    score are centred in the 5:3 playfield area as ``draw_frame`` maps it, then the
+    options. The highlighted option is white and the others are dim. Nothing is drawn
+    when the width or height is 0. Only reads ``screen``.
+    """
+    width, height = surface.get_size()
+    if width <= 0 or height <= 0:
+        return
+
+    surface.fill(BLACK)
+    scale, offset_x, offset_y = fit_playfield(width, height)
+    menu_font = _menu_font(max(1, round(MENU_FONT_SIZE * scale)))
+    score_font = _digit_font(max(1, round(DIGIT_FONT_SIZE * scale)))
+    centre_x = PLAYFIELD_WIDTH / 2
+
+    def put(text: str, font: pygame.font.Font, colour: tuple[int, int, int], x, y):
+        rendered = font.render(text, True, colour)
+        centre = (round(offset_x + x * scale), round(offset_y + y * scale))
+        surface.blit(rendered, rendered.get_rect(center=centre))
+
+    put(screen.winner_text(), menu_font, WHITE, centre_x, GAME_OVER_TITLE_Y)
+    for player, x in SCORE_X.items():
+        put(screen.label(player), menu_font, DIM_TEXT, x, GAME_OVER_LABEL_Y)
+    put(screen.score_text(), score_font, WHITE, centre_x, GAME_OVER_SCORE_Y)
+    for index, text in enumerate(screen.lines()):
+        colour = WHITE if index == screen.highlight else DIM_TEXT
+        y = GAME_OVER_FIRST_ROW_Y + index * MENU_ROW_SPACING
+        put(text, menu_font, colour, centre_x, y)
+
+
 def main() -> int:
     pygame.init()
     # Loaded once. Bindings are read from this object each frame, not the file.
@@ -831,6 +985,8 @@ def main() -> int:
     ai: AIController | None = None
     # Set while the pause menu is open during a match. Its match is paused.
     pause: PauseMenu | None = None
+    # Set from the frame a match is won until Rematch or Main Menu. Its match is over.
+    game_over: GameOverScreen | None = None
 
     running = True
     while running:
@@ -847,6 +1003,18 @@ def main() -> int:
                     if outcome is MenuOutcome.START_GAME:
                         match, ai = _start_match(menu.settings)
                     elif outcome is MenuOutcome.QUIT:
+                        running = False
+                elif game_over is not None:
+                    # Paddle and rally keys do nothing here, and Esc does not pause.
+                    over_outcome = _handle_game_over_key(event.key, game_over)
+                    if over_outcome is GameOverOutcome.REMATCH:
+                        ai = _restart_match(match, settings)
+                        game_over = None
+                    elif over_outcome is GameOverOutcome.MAIN_MENU:
+                        match = None
+                        ai = None
+                        game_over = None
+                    elif over_outcome is GameOverOutcome.QUIT:
                         running = False
                 elif pause is not None:
                     pause_outcome = _handle_pause_key(event.key, pause)
@@ -872,17 +1040,22 @@ def main() -> int:
                 screen = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE)
 
         if match is not None and ai is not None:
-            # While paused the simulation and the AI are not advanced, so the
-            # playfield stays frozen and the AI's timers stop.
-            if pause is None:
+            # While paused, or once the match is won, the simulation and the AI are
+            # not advanced, so the playfield stays frozen and the AI's timers stop.
+            if pause is None and game_over is None:
                 p1_direction, p2_direction = _read_directions(
                     pygame.key.get_pressed(), settings, match, ai, dt
                 )
                 events = match.update(dt, p1_direction, p2_direction)
                 sounds.play(events, settings)
-            draw_frame(screen, match)
-            if pause is not None:
-                draw_pause_menu(screen, pause)
+                if GameEvent.VICTORY in events:
+                    game_over = GameOverScreen(match)
+            if game_over is not None:
+                draw_game_over(screen, game_over)
+            else:
+                draw_frame(screen, match)
+                if pause is not None:
+                    draw_pause_menu(screen, pause)
         else:
             draw_menu(screen, menu)
         pygame.display.flip()
