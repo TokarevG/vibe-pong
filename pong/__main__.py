@@ -179,7 +179,7 @@ def _read_directions(
     The key names are read from ``settings.bindings`` on every call, so a rebinding
     applies on the next frame. P2 follows the keys in two-player mode and the AI in
     single-player, where the P2 keys are ignored. ``ai.update`` is called with
-    ``dt`` and the ball and P2 paddle positions, and only in single-player.
+    ``dt`` and the ball and P2 paddle state, and only in single-player.
     """
     codes = {
         action: _key_code(key_name, action)
@@ -188,7 +188,18 @@ def _read_directions(
     p1_direction = _direction(pressed[codes["p1_up"]], pressed[codes["p1_down"]])
     if match.mode is Mode.SINGLE_PLAYER:
         p2_centre_y = match.p2.y + match.p2.height / 2
-        p2_direction = ai.update(dt, match.ball.y, p2_centre_y)
+        ball = match.ball
+        p2_direction = ai.update(
+            dt,
+            ball_x=ball.x,
+            ball_y=ball.y,
+            ball_vx=ball.vx,
+            ball_vy=ball.vy,
+            ball_radius=ball.radius,
+            paddle_x=match.p2.x,
+            paddle_center_y=p2_centre_y,
+            playfield_height=PLAYFIELD_HEIGHT,
+        )
     else:
         p2_direction = _direction(pressed[codes["p2_up"]], pressed[codes["p2_down"]])
     return p1_direction, p2_direction

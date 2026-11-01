@@ -47,7 +47,18 @@ class _StubAI(AIController):
         self.answer = answer
         self.calls: list[tuple[float, float, float]] = []
 
-    def update(self, dt: float, ball_y: float, paddle_center_y: float) -> int:
+    def update(
+        self,
+        dt: float,
+        ball_x: float,
+        ball_y: float,
+        ball_vx: float,
+        ball_vy: float,
+        ball_radius: float,
+        paddle_x: float,
+        paddle_center_y: float,
+        playfield_height: float,
+    ) -> int:
         self.calls.append((dt, ball_y, paddle_center_y))
         return self.answer
 
