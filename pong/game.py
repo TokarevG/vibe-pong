@@ -6,13 +6,14 @@ opening a window.
 
 from enum import Enum
 
+from pong.ai import Difficulty
 from pong.physics import SERVE_SPEED, Ball, Paddle
 
 WINNING_SCORE = 11
 
 
 class Player(Enum):
-    """The two sides of the playfield. P1 is on the right, P2 on the left."""
+    """The two sides of the playfield. P1 is on the left, P2 on the right."""
 
     P1 = 1
     P2 = 2
@@ -85,11 +86,10 @@ class Match:
     toward the player who conceded the last point (P1 for the first serve).
     ``end_rally`` records a point and returns to serving.
 
-    ``difficulty`` is stored as given and not read here. Its type should become
-    ``Difficulty`` from ``pong/ai.py`` once that module exists (#16).
+    ``difficulty`` is stored as given and not read here.
     """
 
-    def __init__(self, mode: Mode, difficulty: object) -> None:
+    def __init__(self, mode: Mode, difficulty: Difficulty) -> None:
         self.mode = mode
         self.difficulty = difficulty
         self.p1 = Paddle(x=30, y=250)

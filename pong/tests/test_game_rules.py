@@ -1,3 +1,6 @@
+import typing
+
+from pong.ai import Difficulty
 from pong.game import Match, Mode, Player
 from pong.physics import SERVE_SPEED
 
@@ -13,7 +16,7 @@ class _NoTouch:
 
 
 def new_match() -> Match:
-    return Match(Mode.TWO_PLAYER, None)
+    return Match(Mode.TWO_PLAYER, Difficulty.MEDIUM)
 
 
 def test_mode_has_single_player_and_two_player():
@@ -21,14 +24,18 @@ def test_mode_has_single_player_and_two_player():
 
 
 def test_match_stores_mode_and_difficulty_as_given():
-    difficulty = object()
-    match = Match(Mode.SINGLE_PLAYER, difficulty)
+    match = Match(Mode.SINGLE_PLAYER, Difficulty.HARD)
     assert match.mode is Mode.SINGLE_PLAYER
-    assert match.difficulty is difficulty
+    assert match.difficulty is Difficulty.HARD
+
+
+def test_match_difficulty_is_annotated_as_difficulty():
+    hints = typing.get_type_hints(Match.__init__)
+    assert hints["difficulty"] is Difficulty
 
 
 def test_match_does_not_read_difficulty():
-    difficulty = _NoTouch()
+    difficulty = typing.cast(Difficulty, _NoTouch())
     match = Match(Mode.SINGLE_PLAYER, difficulty)
     assert match.difficulty is difficulty
 
