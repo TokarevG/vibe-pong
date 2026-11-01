@@ -2,9 +2,16 @@ import ast
 import dataclasses
 from pathlib import Path
 
+import pytest
+
 from pong.ai import Difficulty
 from pong.game import Mode
-from pong.settings import Settings, config_path, default_settings
+from pong.settings import (
+    Settings,
+    config_path,
+    default_settings,
+    find_binding_conflicts,
+)
 
 SETTINGS_SOURCE = Path(__file__).parent.parent / "settings.py"
 HOME = Path("/home/tester")
@@ -108,3 +115,78 @@ def test_config_path_uses_the_given_home_not_the_real_one():
     assert config_path({}, other_home) == Path(
         "/elsewhere/user/.config/pong/config.json"
     )
+
+
+def test_default_bindings_have_no_conflicts():
+    assert find_binding_conflicts(default_settings().bindings) == []
+
+
+def test_valid_custom_set_has_no_conflicts():
+    bindings = {"p1_up": "i", "p1_down": "k", "p2_up": "o", "p2_down": "l"}
+    assert find_binding_conflicts(bindings) == []
+
+
+def test_duplicate_key_lists_both_actions():
+    bindings = {"p1_up": "w", "p1_down": "s", "p2_up": "w", "p2_down": "down"}
+    assert find_binding_conflicts(bindings) == ["p1_up", "p2_up"]
+
+
+def test_duplicate_key_lists_all_actions_sharing_it():
+    bindings = {"p1_up": "a", "p1_down": "a", "p2_up": "a", "p2_down": "down"}
+    assert find_binding_conflicts(bindings) == ["p1_down", "p1_up", "p2_up"]
+
+
+def test_key_comparison_ignores_case():
+    bindings = {"p1_up": "W", "p1_down": "s", "p2_up": "w", "p2_down": "down"}
+    assert find_binding_conflicts(bindings) == ["p1_up", "p2_up"]
+
+
+def test_esc_as_paddle_key_is_a_conflict():
+    bindings = {"p1_up": "escape", "p1_down": "s", "p2_up": "up", "p2_down": "down"}
+    assert find_binding_conflicts(bindings) == ["p1_up"]
+
+
+def test_esc_comparison_ignores_case():
+    bindings = {"p1_up": "w", "p1_down": "s", "p2_up": "Escape", "p2_down": "down"}
+    assert find_binding_conflicts(bindings) == ["p2_up"]
+
+
+def test_esc_is_reported_with_other_conflicts():
+    bindings = {"p1_up": "escape", "p1_down": "escape", "p2_up": "w", "p2_down": "w"}
+    assert find_binding_conflicts(bindings) == [
+        "p1_down",
+        "p1_up",
+        "p2_down",
+        "p2_up",
+    ]
+
+
+def test_result_is_sorted_regardless_of_input_order():
+    bindings = {"p2_up": "x", "p2_down": "x", "p1_up": "x", "p1_down": "q"}
+    assert find_binding_conflicts(bindings) == ["p1_up", "p2_down", "p2_up"]
+    reordered = {"p1_up": "x", "p2_up": "x", "p2_down": "x", "p1_down": "q"}
+    assert find_binding_conflicts(reordered) == find_binding_conflicts(bindings)
+
+
+def test_missing_action_raises_value_error():
+    bindings = {"p1_up": "w", "p1_down": "s", "p2_up": "up"}
+    with pytest.raises(ValueError):
+        find_binding_conflicts(bindings)
+
+
+def test_extra_action_raises_value_error():
+    bindings = {
+        "p1_up": "w",
+        "p1_down": "s",
+        "p2_up": "up",
+        "p2_down": "down",
+        "pause": "escape",
+    }
+    with pytest.raises(ValueError):
+        find_binding_conflicts(bindings)
+
+
+def test_unknown_action_name_raises_value_error():
+    bindings = {"p1_up": "w", "p1_down": "s", "p2_up": "up", "p3_up": "down"}
+    with pytest.raises(ValueError):
+        find_binding_conflicts(bindings)

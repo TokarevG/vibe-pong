@@ -14,6 +14,11 @@ from pong.game import Mode
 CONFIG_DIR_NAME = "pong"
 CONFIG_FILE_NAME = "config.json"
 
+# The four bindable actions. Pause is fixed to Esc, so it is not bindable.
+BINDABLE_ACTIONS = frozenset({"p1_up", "p1_down", "p2_up", "p2_down"})
+# Esc is reserved for pause and may not be bound to any action.
+RESERVED_KEY = "escape"
+
 
 def _default_bindings() -> dict[str, str]:
     return {
@@ -54,3 +59,27 @@ def config_path(environ: Mapping[str, str], home: Path) -> Path:
     else:
         base = home / ".config"
     return base / CONFIG_DIR_NAME / CONFIG_FILE_NAME
+
+
+def find_binding_conflicts(bindings: Mapping[str, str]) -> list[str]:
+    """Return the sorted action names whose binding is invalid.
+
+    An action is listed when it shares its key with another action, or when
+    it is bound to the reserved Esc key. Key names are compared ignoring case.
+    Raises ValueError unless ``bindings`` has exactly the four paddle actions.
+    """
+    if set(bindings) != BINDABLE_ACTIONS:
+        raise ValueError(
+            f"bindings must have exactly the actions {sorted(BINDABLE_ACTIONS)}, "
+            f"got {sorted(bindings)}"
+        )
+    keys = {action: key.lower() for action, key in bindings.items()}
+    conflicts: set[str] = set()
+    for action, key in keys.items():
+        if key == RESERVED_KEY:
+            conflicts.add(action)
+        if any(
+            other != action and other_key == key for other, other_key in keys.items()
+        ):
+            conflicts.add(action)
+    return sorted(conflicts)
